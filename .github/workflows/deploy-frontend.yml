@@ -24,6 +24,7 @@ jobs:
         env:
           VITE_WS_URL: wss://worldboss-backend.onrender.com
           VITE_API_URL: https://worldboss-backend.onrender.com
+          VITE_BASE_PATH: /worldboss/
       
       - name: Upload to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
