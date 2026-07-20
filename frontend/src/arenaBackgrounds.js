@@ -1,8 +1,8 @@
 const ARENA_BACKGROUNDS = [
-  '/arena-backgrounds/bg-01.png'
+  `${import.meta.env.BASE_URL}arena-backgrounds/bg-01.png`
 ];
 
-const DEFAULT_ARENA_BACKGROUND = '/arena-backgrounds/bg-01.png';
+const DEFAULT_ARENA_BACKGROUND = `${import.meta.env.BASE_URL}arena-backgrounds/bg-01.png`;
 
 function stableHash(input) {
   const text = String(input || 'default-boss');
