@@ -33,10 +33,10 @@ class BossManager extends EventEmitter {
       headquarters: { base: 30, growth: 1.35 }
     };
     this.structures = {
-      ammoFactory: { level: 1, constructionProgress: 0 },
-      frontlineCamp: { level: 1, constructionProgress: 0 },
-      trainingCenter: { level: 1, constructionProgress: 0 },
-      artilleryBattery: { level: 1, constructionProgress: 0 },
+      ammoFactory: { level: 0, constructionProgress: 0 },
+      frontlineCamp: { level: 0, constructionProgress: 0 },
+      trainingCenter: { level: 0, constructionProgress: 0 },
+      artilleryBattery: { level: 0, constructionProgress: 0 },
       headquarters: { level: 0, constructionProgress: 0 }
     };
     this.playerAmmo = new Map();

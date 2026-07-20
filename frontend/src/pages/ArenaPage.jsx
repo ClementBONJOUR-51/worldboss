@@ -375,10 +375,10 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
   })
 
   const structureIconEntries = [
-    { key: 'ammoFactory', label: 'Usines', icon: '🏭', level: ammoFactory.level ?? 1 },
-    { key: 'frontlineCamp', label: 'Camps', icon: '⛺', level: frontlineCamp.level ?? 1 },
-    { key: 'trainingCenter', label: 'Acad.', icon: '🎯', level: trainingCenter.level ?? 1 },
-    { key: 'artilleryBattery', label: 'Batteries', icon: '🧨', level: artilleryBattery.level ?? 1 },
+    { key: 'ammoFactory', label: 'Usines', icon: '🏭', level: ammoFactory.level ?? 0 },
+    { key: 'frontlineCamp', label: 'Camps', icon: '⛺', level: frontlineCamp.level ?? 0 },
+    { key: 'trainingCenter', label: 'Acad.', icon: '🎯', level: trainingCenter.level ?? 0 },
+    { key: 'artilleryBattery', label: 'Batteries', icon: '🧨', level: artilleryBattery.level ?? 0 },
     { key: 'headquarters', label: 'QG', icon: '🏛️', level: headquarters.level ?? 0 }
   ]
 
@@ -535,20 +535,23 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
           React.createElement(
             'div',
             { className: 'structures-icon-row' },
-            structureIconEntries.map((entry) =>
-              React.createElement(
+            structureIconEntries.map((entry) => {
+              const isAmmoFactory = entry.key === 'ammoFactory'
+              return React.createElement(
                 'div',
                 {
                   key: entry.key,
                   className: 'structure-icon-chip',
-                  title: `${entry.label} niveau ${entry.level}`,
+                  title: `${entry.label} niveau ${entry.level}${isAmmoFactory ? ` - ${playerAmmo} balles` : ''}`,
                   onClick: () => handleStructureBuild(entry.key)
                 },
                 React.createElement('div', { className: 'structure-icon' }, entry.icon),
                 React.createElement('div', { className: 'structure-icon-label' }, entry.label),
-                React.createElement('div', { className: 'structure-icon-level' }, `Niv. ${entry.level}`)
+                isAmmoFactory 
+                  ? React.createElement('div', { className: 'structure-icon-ammo' }, `${playerAmmo}`)
+                  : React.createElement('div', { className: 'structure-icon-level' }, `Niv. ${entry.level}`)
               )
-            )
+            })
           )
         ),
       ),
