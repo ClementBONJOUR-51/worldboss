@@ -105,7 +105,7 @@ html,body,#root { height: 100%; margin: 0; }
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(210px, 1fr) minmax(280px, 1.35fr) minmax(210px, 1fr);
-  grid-template-rows: minmax(0, 1.2fr) minmax(0, 3.5fr) minmax(0, 3.5fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.2fr) minmax(0, 3fr) minmax(0, 3fr) minmax(0, 1.5fr) minmax(0, 1.5fr);
   gap: clamp(6px, 0.8vw, 10px);
   position: relative;
   overflow: hidden;
