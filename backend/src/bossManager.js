@@ -3,7 +3,6 @@ const EventEmitter = require('events');
 class BossManager extends EventEmitter {
   constructor() {
     super();
-    const now = Date.now();
     this.bossPresets = [
       {
         id: 'boss-1',
@@ -11,17 +10,53 @@ class BossManager extends EventEmitter {
         maxHp: 10000,
         spawn: { city: 'Atlantique Nord', lat: 60.0, lng: -30.0 },
         target: { city: 'Paris', lat: 48.8566, lng: 2.3522 },
-        spawnAt: now - 5 * 60 * 1000,
-        arrivalAt: now + 20 * 60 * 1000
+        spawnOffsetMinutes: -3,
+        travelMinutes: 20
       },
       {
         id: 'boss-2',
         name: 'Rift Serpent',
         maxHp: 16000,
-        spawn: { city: 'Nairobi', lat: -1.2921, lng: 36.8219 },
+        spawn: { city: 'Ocean Indien', lat: -18.0, lng: 64.0 },
         target: { city: 'Tokyo', lat: 35.6762, lng: 139.6503 },
-        spawnAt: now + 3 * 60 * 1000,
-        arrivalAt: now + 28 * 60 * 1000
+        spawnOffsetMinutes: -1,
+        travelMinutes: 24
+      },
+      {
+        id: 'boss-3',
+        name: 'Abyss Colossus',
+        maxHp: 14000,
+        spawn: { city: 'Atlantique Ouest', lat: 33.0, lng: -65.0 },
+        target: { city: 'New York', lat: 40.7128, lng: -74.0060 },
+        spawnOffsetMinutes: -2,
+        travelMinutes: 18
+      },
+      {
+        id: 'boss-4',
+        name: 'Sable Maw',
+        maxHp: 13000,
+        spawn: { city: 'Mer Rouge', lat: 20.0, lng: 38.0 },
+        target: { city: 'Cairo', lat: 30.0444, lng: 31.2357 },
+        spawnOffsetMinutes: -2,
+        travelMinutes: 16
+      },
+      {
+        id: 'boss-5',
+        name: 'Storm Kraken',
+        maxHp: 17000,
+        spawn: { city: 'Pacifique Sud', lat: -33.0, lng: 156.0 },
+        target: { city: 'Sydney', lat: -33.8688, lng: 151.2093 },
+        spawnOffsetMinutes: -1,
+        travelMinutes: 22
+      },
+      {
+        id: 'boss-6',
+        name: 'Obsidian Eel',
+        maxHp: 15000,
+        spawn: { city: 'Atlantique Sud', lat: -20.0, lng: -15.0 },
+        target: { city: 'Rio de Janeiro', lat: -22.9068, lng: -43.1729 },
+        spawnOffsetMinutes: -1,
+        travelMinutes: 21
       }
     ];
     this.bossPresetIndex = 0;
@@ -32,20 +67,19 @@ class BossManager extends EventEmitter {
       artilleryBattery: { base: 24, growth: 1.32 },
       headquarters: { base: 30, growth: 1.35 }
     };
-    this.structures = {
-      ammoFactory: { level: 0, constructionProgress: 0 },
-      frontlineCamp: { level: 0, constructionProgress: 0 },
-      trainingCenter: { level: 0, constructionProgress: 0 },
-      artilleryBattery: { level: 0, constructionProgress: 0 },
-      headquarters: { level: 0, constructionProgress: 0 }
-    };
+    this.structures = this._createStructuresState();
     this.playerAmmo = new Map();
     this.playerEmotes = new Map();
+    this.playerNicknames = new Map();
     this.playerEmoteTimers = new Map();
     this.allowedEmotes = new Set(['🤩', '🫡', '😁', '😎', '😰']);
     this.resetBoss();
     this.pendingClicks = new Map(); // playerId -> clicks
     this.connectedPlayers = new Set(); // active players in arena
+    this.chatHistory = [];
+    this.chatMessageCounter = 0;
+    this.damageTotals = { click: 0, passive: 0, qte: 0 };
+    this.matchEnded = false;
     this.tickIntervalMs = 2000;
     this._tickHandle = null;
   }
@@ -67,6 +101,29 @@ class BossManager extends EventEmitter {
         lat: preset.spawn.lat,
         lng: preset.spawn.lng
       }
+    };
+  }
+
+  _createStructuresState() {
+    return {
+      ammoFactory: { level: 0, constructionProgress: 0 },
+      frontlineCamp: { level: 0, constructionProgress: 0 },
+      trainingCenter: { level: 0, constructionProgress: 0 },
+      artilleryBattery: { level: 0, constructionProgress: 0 },
+      headquarters: { level: 0, constructionProgress: 0 }
+    };
+  }
+
+  _buildTimedPreset(template, now = Date.now()) {
+    const spawnOffsetMinutes = Number(template.spawnOffsetMinutes || 0);
+    const travelMinutes = Math.max(8, Number(template.travelMinutes || 20));
+    const spawnAt = now + spawnOffsetMinutes * 60 * 1000;
+    const arrivalAt = spawnAt + travelMinutes * 60 * 1000;
+
+    return {
+      ...template,
+      spawnAt,
+      arrivalAt
     };
   }
 
@@ -111,11 +168,19 @@ class BossManager extends EventEmitter {
   }
 
   resetBoss() {
-    const preset = this.bossPresets[this.bossPresetIndex % this.bossPresets.length];
+    const template = this.bossPresets[this.bossPresetIndex % this.bossPresets.length];
+    const preset = this._buildTimedPreset(template, Date.now());
     this.bossPresetIndex += 1;
     this.boss = this._createBossFromPreset(preset);
+    this.structures = this._createStructuresState();
     this._syncBossTimeline();
     this.contributions = {}; // playerId -> totalDamage
+    if (this.pendingClicks && typeof this.pendingClicks.clear === 'function') {
+      this.pendingClicks.clear();
+    }
+    this.damageTotals = { click: 0, passive: 0, qte: 0 };
+    this.matchEnded = false;
+    this.chatHistory = [];
   }
 
   registerPlayer(playerId) {
@@ -126,17 +191,84 @@ class BossManager extends EventEmitter {
     if (!this.playerEmotes.has(playerId)) {
       this.playerEmotes.set(playerId, null);
     }
+    if (!this.playerNicknames.has(playerId)) {
+      this.playerNicknames.set(playerId, null);
+    }
   }
 
   unregisterPlayer(playerId) {
     this.connectedPlayers.delete(playerId);
     this.playerAmmo.delete(playerId);
     this.playerEmotes.delete(playerId);
+    this.playerNicknames.delete(playerId);
     const timer = this.playerEmoteTimers.get(playerId);
     if (timer) {
       clearTimeout(timer);
       this.playerEmoteTimers.delete(playerId);
     }
+  }
+
+  setPlayerNickname(playerId, nickname) {
+    this.registerPlayer(playerId);
+    const clean = String(nickname || '').trim().slice(0, 24);
+    if (!clean) {
+      return { ok: false, reason: 'invalid_nickname' };
+    }
+
+    this.playerNicknames.set(playerId, clean);
+    this.emit('update', this.getState());
+    return { ok: true, playerId, nickname: clean };
+  }
+
+  getPlayerNickname(playerId) {
+    const nickname = this.playerNicknames.get(playerId);
+    if (nickname && nickname.trim()) return nickname;
+    return `Joueur-${String(playerId || '').slice(0, 6)}`;
+  }
+
+  addChatMessage(playerId, text) {
+    const content = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    if (!content) {
+      return { ok: false, reason: 'empty_message' };
+    }
+
+    const msg = {
+      id: `m-${Date.now()}-${this.chatMessageCounter++}`,
+      playerId,
+      nickname: this.getPlayerNickname(playerId),
+      text: content,
+      createdAt: Date.now()
+    };
+
+    this.chatHistory.push(msg);
+    if (this.chatHistory.length > 60) {
+      this.chatHistory.shift();
+    }
+
+    return { ok: true, message: msg };
+  }
+
+  addSystemMessage(playerId, text, kind = 'system') {
+    const content = String(text || '').trim().slice(0, 140);
+    if (!content) {
+      return { ok: false, reason: 'empty_message' };
+    }
+
+    const msg = {
+      id: `m-${Date.now()}-${this.chatMessageCounter++}`,
+      playerId,
+      nickname: this.getPlayerNickname(playerId),
+      text: content,
+      kind,
+      createdAt: Date.now()
+    };
+
+    this.chatHistory.push(msg);
+    if (this.chatHistory.length > 60) {
+      this.chatHistory.shift();
+    }
+
+    return { ok: true, message: msg };
   }
 
   setPlayerEmote(playerId, emote) {
@@ -325,11 +457,11 @@ class BossManager extends EventEmitter {
 
     this.registerPlayer(playerId);
     this.contributions[playerId] = (this.contributions[playerId] || 0) + safeDamage;
+    this.damageTotals.qte += safeDamage;
     this.boss.hp = Math.max(0, this.boss.hp - safeDamage);
 
     if (this.boss.hp === 0) {
-      this.boss.alive = false;
-      this.emit('dead', { boss: this.boss, contributions: this.contributions });
+      this._finalizeMatch('victory');
     }
 
     this.emit('update', this.getState());
@@ -347,8 +479,15 @@ class BossManager extends EventEmitter {
   }
 
   _tick() {
-    if (!this.boss.alive) return;
+    if (!this.boss.alive || this.matchEnded) return;
     const timelineChanged = this._syncBossTimeline();
+    const now = Date.now();
+
+    if (now >= Number(this.boss.arrivalAt || 0)) {
+      this._finalizeMatch('defeat');
+      return;
+    }
+
     this._distributeAmmoForTick();
 
     let totalDamage = 0;
@@ -362,13 +501,14 @@ class BossManager extends EventEmitter {
 
     const passiveDamageTotal = this._applyPassiveDamageForTick();
     totalDamage += passiveDamageTotal;
+    this.damageTotals.click += clickDamageTotal;
+    this.damageTotals.passive += passiveDamageTotal;
     this.pendingClicks.clear();
 
     if (totalDamage > 0) {
       this.boss.hp = Math.max(0, this.boss.hp - totalDamage);
       if (this.boss.hp === 0) {
-        this.boss.alive = false;
-        this.emit('dead', { boss: this.boss, contributions: this.contributions });
+        this._finalizeMatch('victory');
       }
       this.emit('combat_tick', {
         clickDamageTotal,
@@ -384,14 +524,51 @@ class BossManager extends EventEmitter {
     }
   }
 
+  _getTimeStats(now = Date.now()) {
+    const spawnAt = Number(this.boss.spawnAt) || now;
+    const arrivalAt = Number(this.boss.arrivalAt) || now;
+    const totalDurationMs = Math.max(0, arrivalAt - spawnAt);
+    const elapsedMs = Math.max(0, Math.min(totalDurationMs, now - spawnAt));
+    const remainingMs = Math.max(0, arrivalAt - now);
+    return { totalDurationMs, elapsedMs, remainingMs };
+  }
+
+  _buildMatchEndPayload(outcome, now = Date.now()) {
+    const fullState = this.getState();
+    return {
+      outcome,
+      endedAt: now,
+      time: this._getTimeStats(now),
+      damageTotals: {
+        click: this.damageTotals.click,
+        passive: this.damageTotals.passive,
+        qte: this.damageTotals.qte,
+        active: this.damageTotals.click + this.damageTotals.qte,
+        total: this.damageTotals.click + this.damageTotals.passive + this.damageTotals.qte
+      },
+      state: fullState
+    };
+  }
+
+  _finalizeMatch(outcome) {
+    if (this.matchEnded) return;
+    this.matchEnded = true;
+    this.boss.alive = false;
+    const payload = this._buildMatchEndPayload(outcome, Date.now());
+    this.emit('match_end', payload);
+    this.emit('dead', { boss: this.boss, contributions: this.contributions, outcome });
+  }
+
   getState() {
     this._syncBossTimeline();
     const connectedPlayers = Array.from(this.connectedPlayers);
     const ammoByPlayer = {};
     const playerEmotes = {};
+    const playerNicknames = {};
     connectedPlayers.forEach((pid) => {
       ammoByPlayer[pid] = Number(this.getAmmo(pid).toFixed(2));
       playerEmotes[pid] = this.playerEmotes.get(pid) || null;
+      playerNicknames[pid] = this.playerNicknames.get(pid) || null;
     });
 
     const passiveDpsPerSec = Number(this._getPassiveDpsPerSec().toFixed(2));
@@ -409,6 +586,8 @@ class BossManager extends EventEmitter {
       connectedPlayers,
       ammoByPlayer,
       playerEmotes,
+      playerNicknames,
+      chatHistory: this.chatHistory,
       structures: {
         ammoFactory: {
           ...this.getStructureProgress('ammoFactory'),

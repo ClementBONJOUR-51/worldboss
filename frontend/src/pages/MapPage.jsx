@@ -1,10 +1,31 @@
 import React, { useEffect, useRef } from 'react'
 import L from 'leaflet'
 
-export default function MapPage({ state, onEnterArena }) {
+function iconForCity(city, kind) {
+  const normalized = String(city || '').toLowerCase()
+  if (kind === 'spawn') {
+    if (normalized.includes('atlant')) return '🌊'
+    if (normalized.includes('pacifique')) return '⛴️'
+    if (normalized.includes('arctique')) return '🧊'
+    return '🏰'
+  }
+
+  if (normalized.includes('paris')) return '🗼'
+  if (normalized.includes('tokyo')) return '🗾'
+  if (normalized.includes('new york')) return '🗽'
+  if (normalized.includes('rio')) return '🗿'
+  if (normalized.includes('cairo')) return '🕌'
+  if (normalized.includes('sydney')) return '🌉'
+  if (normalized.includes('rome')) return '🏛️'
+  return '🏙️'
+}
+
+export default function MapPage({ state, onEnterArena, nickname }) {
   const mapRef = useRef(null)
   const markerRef = useRef(null)
   const routeRef = useRef(null)
+  const spawnMarkerRef = useRef(null)
+  const targetMarkerRef = useRef(null)
 
   useEffect(() => {
     mapRef.current = L.map('map').setView([20, 0], 2)
@@ -18,6 +39,12 @@ export default function MapPage({ state, onEnterArena }) {
       html: '<div class="boss-icon">🦑</div>'
     })
     markerRef.current = L.marker([48.8566, 2.3522], { icon: bossIcon }).addTo(mapRef.current)
+    spawnMarkerRef.current = L.marker([48.8566, 2.3522], {
+      icon: L.divIcon({ className: 'city-marker', html: '<div class="city-icon">🏰</div>' })
+    }).addTo(mapRef.current)
+    targetMarkerRef.current = L.marker([48.8566, 2.3522], {
+      icon: L.divIcon({ className: 'city-marker', html: '<div class="city-icon">🏛️</div>' })
+    }).addTo(mapRef.current)
     routeRef.current = L.polyline(
       [
         [48.8566, 2.3522],
@@ -54,6 +81,18 @@ export default function MapPage({ state, onEnterArena }) {
     ])
 
     markerRef.current.setLatLng([pos.lat, pos.lng])
+    if (spawnMarkerRef.current) {
+      const spawnIcon = iconForCity(spawn.city, 'spawn')
+      spawnMarkerRef.current.setIcon(L.divIcon({ className: 'city-marker', html: `<div class="city-icon">${spawnIcon}</div>` }))
+      spawnMarkerRef.current.setLatLng([spawn.lat, spawn.lng])
+      spawnMarkerRef.current.bindTooltip(`Depart: ${spawn.city || 'Spawn'}`)
+    }
+    if (targetMarkerRef.current) {
+      const destinationIcon = iconForCity(target.city, 'target')
+      targetMarkerRef.current.setIcon(L.divIcon({ className: 'city-marker', html: `<div class="city-icon">${destinationIcon}</div>` }))
+      targetMarkerRef.current.setLatLng([target.lat, target.lng])
+      targetMarkerRef.current.bindTooltip(`Arrivee: ${target.city || 'Cible'}`)
+    }
   }, [state?.boss])
 
   return React.createElement(
@@ -62,8 +101,10 @@ export default function MapPage({ state, onEnterArena }) {
     React.createElement(
       'div',
       { className: 'hud' },
-      React.createElement('div', { className: 'instructions' }, '🗺️ Cliquez sur le boss pour commencer un combat')
+      React.createElement('div', { className: 'instructions' }, `🗺️ ${nickname ? `${nickname}, ` : ''}clique le boss pour commencer un combat`),
+      React.createElement('div', { className: 'instructions-sub' }, 'Repere les points de depart et d arrivee pour anticiper l invasion.')
     ),
+    React.createElement('div', { className: 'map-frame-overlay', 'aria-hidden': 'true' }),
     React.createElement('div', { id: 'map', style: { height: '100vh' } })
   )
 }

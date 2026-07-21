@@ -19,6 +19,7 @@ app.get('/boss', (req, res) => {
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+const lastChatByPlayer = new Map();
 
 wss.on('connection', (ws) => {
   const clientId = uuidv4();
@@ -28,7 +29,18 @@ wss.on('connection', (ws) => {
   bossManager.registerPlayer(clientId);
 
   // send initial state
-  ws.send(JSON.stringify({ type: 'welcome', data: { playerId: clientId } }));
+  const now = Date.now();
+  const activeQte = qteService.getActiveQte(clientId, now);
+  ws.send(JSON.stringify({
+    type: 'welcome',
+    data: {
+      playerId: clientId,
+      playerState: {
+        activeQte,
+        cooldownRemainingMs: qteService.getCooldownRemainingMs(clientId, now)
+      }
+    }
+  }));
   ws.send(JSON.stringify({ type: 'state', data: bossManager.getState() }));
 
   ws.on('message', (raw) => {
@@ -39,6 +51,7 @@ wss.on('connection', (ws) => {
         const now = Date.now();
 
         if (!bossManager.consumeAmmo(pid, 1)) {
+          console.log('[QTE] click denied no_ammo for player', pid);
           ws.send(JSON.stringify({
             type: 'click_result',
             data: {
@@ -76,6 +89,21 @@ wss.on('connection', (ws) => {
           }
         }));
 
+        const existingQte = qteService.getActiveQte(pid, now);
+        if (existingQte) {
+          ws.send(JSON.stringify({
+            type: 'qte_grant',
+            data: {
+              qteId: existingQte.id,
+              playerId: existingQte.playerId,
+              tier: existingQte.tier,
+              color: existingQte.color,
+              expiresAt: existingQte.expiresAt
+            }
+          }));
+          return;
+        }
+
         if (!qteService.isOnCooldown(pid, now)) {
           const qte = qteService.maybeGrantQte(pid, now, {
             enabled: bossManager.isFrontlineCampActive(),
@@ -86,6 +114,7 @@ wss.on('connection', (ws) => {
               type: 'qte_grant',
               data: {
                 qteId: qte.id,
+                playerId: qte.playerId,
                 tier: qte.tier,
                 color: qte.color,
                 expiresAt: qte.expiresAt
@@ -114,6 +143,7 @@ wss.on('connection', (ws) => {
             }
           }));
         } else {
+          console.log('[QTE] hit rejected', { playerId: pid, reason: result.reason });
           ws.send(JSON.stringify({
             type: 'qte_result',
             data: {
@@ -145,6 +175,48 @@ wss.on('connection', (ws) => {
           type: 'set_emote_result',
           data: result
         }));
+
+        if (result.ok) {
+          const chatEvent = bossManager.addSystemMessage(pid, `emote ${emote}`, 'emote');
+          if (chatEvent.ok) {
+            broadcast({ type: 'chat_message', data: chatEvent.message });
+          }
+        }
+      }
+
+      if (msg.type === 'set_nickname') {
+        const pid = msg.playerId || ws._clientId;
+        const result = bossManager.setPlayerNickname(pid, msg.nickname);
+        ws.send(JSON.stringify({ type: 'set_nickname_result', data: result }));
+      }
+
+      if (msg.type === 'chat_message') {
+        const pid = msg.playerId || ws._clientId;
+        const nowForChat = Date.now();
+        const lastAt = lastChatByPlayer.get(pid) || 0;
+        if (nowForChat - lastAt < 600) {
+          ws.send(JSON.stringify({
+            type: 'chat_message_result',
+            data: { ok: false, reason: 'cooldown' }
+          }));
+          return;
+        }
+
+        const result = bossManager.addChatMessage(pid, msg.text);
+        if (!result.ok) {
+          ws.send(JSON.stringify({
+            type: 'chat_message_result',
+            data: result
+          }));
+          return;
+        }
+
+        lastChatByPlayer.set(pid, nowForChat);
+        broadcast({ type: 'chat_message', data: result.message });
+        ws.send(JSON.stringify({
+          type: 'chat_message_result',
+          data: { ok: true, id: result.message.id }
+        }));
       }
     } catch (err) {
       console.error('ws message error', err);
@@ -154,6 +226,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     bossManager.unregisterPlayer(clientId);
     qteService.clearPlayer(clientId);
+    lastChatByPlayer.delete(clientId);
     // Broadcast updated player list
     broadcast({ type: 'state', data: bossManager.getState() });
   });
@@ -177,11 +250,15 @@ bossManager.on('combat_tick', (data) => {
 bossManager.on('dead', ({ boss, contributions }) => {
   const fullState = bossManager.getState();
   broadcast({ type: 'dead', data: fullState });
+});
+
+bossManager.on('match_end', (payload) => {
+  broadcast({ type: 'match_end', data: payload });
   // reset after short delay for POC
   setTimeout(() => {
     bossManager.resetBoss();
     broadcast({ type: 'state', data: bossManager.getState() });
-  }, 5000);
+  }, 120000);
 });
 
 bossManager.start();

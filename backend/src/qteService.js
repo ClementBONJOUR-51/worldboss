@@ -44,6 +44,19 @@ class QteService {
     this.cooldownByPlayer = new Map();
   }
 
+  getActiveQte(playerId, now = Date.now()) {
+    const active = this.activeByPlayer.get(playerId);
+    if (!active) return null;
+
+    if (active.expiresAt <= now) {
+      this.activeByPlayer.delete(playerId);
+      this.setCooldown(playerId, qteConfig.playerCooldownMs, now);
+      return null;
+    }
+
+    return { ...active };
+  }
+
   isOnCooldown(playerId, now = Date.now()) {
     const cooldownUntil = this.cooldownByPlayer.get(playerId) || 0;
     return cooldownUntil > now;

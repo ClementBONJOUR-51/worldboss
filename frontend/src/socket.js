@@ -51,9 +51,19 @@ export default function createSocket(onMessage) {
     ws.send(JSON.stringify(payload))
   }
 
+  function sendNickname(nickname, playerId) {
+    const payload = { type: 'set_nickname', nickname, playerId }
+    ws.send(JSON.stringify(payload))
+  }
+
+  function sendChatMessage(text, playerId) {
+    const payload = { type: 'chat_message', text, playerId }
+    ws.send(JSON.stringify(payload))
+  }
+
   function close() {
     try { ws.close() } catch (e) { /* ignore */ }
   }
 
-  return { sendClick, sendQteHit, sendStructureBuild, sendEmote, close }
+  return { sendClick, sendQteHit, sendStructureBuild, sendEmote, sendNickname, sendChatMessage, close }
 }

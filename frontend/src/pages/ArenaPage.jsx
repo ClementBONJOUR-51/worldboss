@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { getArenaBackgroundForBoss } from '../arenaBackgrounds'
 import SoldierPanel from '../components/SoldierPanel'
+import TerminalChat from '../components/TerminalChat'
 
-export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEvent, qteResultEvent, clickResultEvent, combatTickEvent }) {
+export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEvent, qteResultEvent, clickResultEvent, combatTickEvent, chatMessages }) {
   const [isFlashing, setIsFlashing] = useState(false)
   const [isShaking, setIsShaking] = useState(false)
   const [isLightShaking, setIsLightShaking] = useState(false)
+  const [noAmmoAlert, setNoAmmoAlert] = useState(false)
   const [floatingDamages, setFloatingDamages] = useState([])
   const [activeQte, setActiveQte] = useState(null)
   const [qteFeedback, setQteFeedback] = useState(null)
@@ -14,6 +16,7 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
   const [bossHpWhiteDurationMs, setBossHpWhiteDurationMs] = useState(1000)
   const [prevBossHp, setPrevBossHp] = useState(null)
   const [bossEmojiSizePx, setBossEmojiSizePx] = useState(220)
+  const [emoteMenuOpen, setEmoteMenuOpen] = useState(false)
   const arenaLeftRef = useRef(null)
   const containerRef = useRef(null)
   const qteTimeoutRef = useRef(null)
@@ -149,20 +152,23 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
 
   useEffect(() => {
     if (!qteGrantEvent?.qteId) return
+    if (qteGrantEvent.playerId && qteGrantEvent.playerId !== playerId) return
 
     const now = Date.now()
     const msLeft = Math.max(0, (qteGrantEvent.expiresAt || now) - now)
     if (msLeft <= 0) return
 
-    const pos = getBossQtePosition()
+    const currentPos = activeQte && activeQte.qteId === qteGrantEvent.qteId
+      ? { x: activeQte.x, y: activeQte.y }
+      : getBossQtePosition()
     clearQteTimeout()
     setQteFeedback(null)
     setActiveQte({
       qteId: qteGrantEvent.qteId,
       tier: qteGrantEvent.tier,
       color: qteGrantEvent.color,
-      x: pos.x,
-      y: pos.y,
+      x: currentPos.x,
+      y: currentPos.y,
       expiresAt: qteGrantEvent.expiresAt
     })
 
@@ -174,7 +180,7 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
         return current
       })
     }, msLeft)
-  }, [qteGrantEvent])
+  }, [qteGrantEvent, activeQte, playerId])
 
   useEffect(() => {
     if (!qteResultEvent) return
@@ -256,7 +262,18 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
 
   useEffect(() => {
     if (!clickResultEvent?.receivedAt) return
-    if (!clickResultEvent.ok || !state?.boss?.alive) return
+    if (!clickResultEvent.ok || !state?.boss?.alive) {
+      if (clickResultEvent.reason === 'no_ammo') {
+        setNoAmmoAlert(true)
+        setTimeout(() => setNoAmmoAlert(false), 1200)
+      }
+      return
+    }
+
+    setIsFlashing(true)
+    setTimeout(() => setIsFlashing(false), 150)
+    setIsShaking(true)
+    setTimeout(() => setIsShaking(false), 400)
 
     const clickPos = clickResultEvent.clickId ? pendingClickPositionsRef.current.get(clickResultEvent.clickId) : null
     if (clickResultEvent.clickId) {
@@ -286,14 +303,6 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
   const handleBossClick = (e) => {
     if (socket && state?.boss?.alive) {
       const clickId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      // Trigger flash animation
-      setIsFlashing(true)
-      setTimeout(() => setIsFlashing(false), 150)
-
-      // Trigger shake animation
-      setIsShaking(true)
-      setTimeout(() => setIsShaking(false), 400)
-
       const rect = containerRef.current?.getBoundingClientRect()
       const x = e.clientX - (rect?.left || 0)
       const y = e.clientY - (rect?.top || 0)
@@ -323,6 +332,12 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
   const handleEmoteSelect = (emote) => {
     if (!socket || !playerId) return
     socket.sendEmote(emote, playerId)
+    setEmoteMenuOpen(false)
+  }
+
+  const handleSendChat = (text) => {
+    if (!socket || !playerId) return
+    socket.sendChatMessage(text, playerId)
   }
 
   const hp = Math.max(0, state?.boss?.hp ?? 0)
@@ -393,7 +408,7 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
         { className: 'arena-grid', ref: arenaLeftRef },
         React.createElement(
           'div',
-          { className: 'arena-ammo-corner' },
+          { className: `arena-ammo-corner ${noAmmoAlert ? 'arena-ammo-corner-alert' : ''}`.trim() },
           React.createElement('i', { className: 'bi bi-bullseye ammo-icon', 'aria-hidden': 'true' }),
           React.createElement('div', { className: 'ammo-corner-value' }, `${playerAmmo}`)
         ),
@@ -439,26 +454,12 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
         ),
         React.createElement(
           'div',
-          { className: 'arena-empty-cell-left emote-section' },
-          React.createElement('div', { className: 'emote-title' }, 'Emote escouade'),
-          React.createElement('div', { className: 'emote-current' }, `Actuel: ${currentPlayerEmote}`),
-          React.createElement(
-            'div',
-            { className: 'emote-grid' },
-            emoteChoices.map((emote) => {
-              const active = currentPlayerEmote === emote
-              return React.createElement(
-                'button',
-                {
-                  key: emote,
-                  className: `emote-btn ${active ? 'emote-btn-active' : ''}`,
-                  onClick: () => handleEmoteSelect(emote),
-                  title: `Choisir ${emote}`
-                },
-                emote
-              )
-            })
-          )
+          { className: 'arena-empty-cell-left' },
+          React.createElement(TerminalChat, {
+            messages: chatMessages,
+            playerId,
+            onSend: handleSendChat
+          })
         ),
         React.createElement(SoldierPanel, {
           title: 'Escouade gauche',
@@ -466,7 +467,12 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
           contributions: state?.contributions,
           playerEmotes,
           currentPlayerId: playerId,
-          className: 'soldier-side-left'
+          className: 'soldier-side-left',
+          onSelfClick: () => setEmoteMenuOpen((prev) => !prev),
+          emoteMenuOpen,
+          emoteChoices,
+          currentPlayerEmote,
+          onSelectEmote: handleEmoteSelect
         }),
         React.createElement(
           'div',
@@ -517,7 +523,12 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
           contributions: state?.contributions,
           playerEmotes,
           currentPlayerId: playerId,
-          className: 'soldier-side-right'
+          className: 'soldier-side-right',
+          onSelfClick: () => setEmoteMenuOpen((prev) => !prev),
+          emoteMenuOpen,
+          emoteChoices,
+          currentPlayerEmote,
+          onSelectEmote: handleEmoteSelect
         }),
         React.createElement(SoldierPanel, {
           title: 'Escouade ligne de front',
@@ -526,7 +537,12 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
           playerEmotes,
           currentPlayerId: playerId,
           className: 'soldier-side-wide',
-          center: true
+          center: true,
+          onSelfClick: () => setEmoteMenuOpen((prev) => !prev),
+          emoteMenuOpen,
+          emoteChoices,
+          currentPlayerEmote,
+          onSelectEmote: handleEmoteSelect
         }),
         React.createElement(
           'div',
@@ -548,7 +564,7 @@ export default function ArenaPage({ state, playerId, onExit, socket, qteGrantEve
                 React.createElement('div', { className: 'structure-icon' }, entry.icon),
                 React.createElement('div', { className: 'structure-icon-label' }, entry.label),
                 isAmmoFactory 
-                  ? React.createElement('div', { className: 'structure-icon-ammo' }, `${playerAmmo}`)
+                  ? React.createElement('div', { className: `structure-icon-ammo ${noAmmoAlert ? 'structure-icon-ammo-alert' : ''}`.trim() }, `${playerAmmo}`)
                   : React.createElement('div', { className: 'structure-icon-level' }, `Niv. ${entry.level}`)
               )
             })
