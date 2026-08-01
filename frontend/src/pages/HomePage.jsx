@@ -1,21 +1,7 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo } from 'react'
 
-export default function HomePage({ nickname, hasNickname, onSubmitNickname, onContinue }) {
-  const [value, setValue] = useState(nickname || '')
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [error, setError] = useState('')
-
-  const previewName = useMemo(() => String(value || nickname || '').trim().slice(0, 24), [value, nickname])
-
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    const ok = onSubmitNickname(value)
-    if (!ok) {
-      setError('Entre un pseudo valide (1 a 24 caracteres).')
-      return
-    }
-    setError('')
-  }
+export default function HomePage({ nickname, hasNickname, onContinue, audioMuted, onToggleAudioMute }) {
+  const previewName = useMemo(() => String(nickname || '').trim().slice(0, 24), [nickname])
 
   return React.createElement(
     'div',
@@ -29,41 +15,11 @@ export default function HomePage({ nickname, hasNickname, onSubmitNickname, onCo
       React.createElement(
         'button',
         {
-          className: 'home-settings-btn',
+          className: `audio-toggle-btn ${audioMuted ? '' : 'audio-toggle-enabled'}`.trim(),
           type: 'button',
-          onClick: () => setSettingsOpen((prev) => !prev)
+          onClick: onToggleAudioMute
         },
-        React.createElement('i', { className: 'bi bi-gear-fill', 'aria-hidden': 'true' }),
-        ' Parametres'
-      )
-    ),
-    settingsOpen && React.createElement(
-      'div',
-      { className: 'home-settings-panel' },
-      React.createElement('div', { className: 'home-settings-title' }, 'Renommer le pilote'),
-      React.createElement(
-        'form',
-        {
-          className: 'home-settings-form',
-          onSubmit: (e) => {
-            e.preventDefault()
-            const ok = onSubmitNickname(value)
-            if (!ok) {
-              setError('Entre un pseudo valide (1 a 24 caracteres).')
-              return
-            }
-            setError('')
-            setSettingsOpen(false)
-          }
-        },
-        React.createElement('input', {
-          className: 'home-input',
-          value,
-          maxLength: 24,
-          placeholder: 'Nouveau pseudo',
-          onChange: (e) => setValue(e.target.value)
-        }),
-        React.createElement('button', { type: 'submit', className: 'home-submit-btn' }, 'Appliquer')
+        audioMuted ? '🔇 Son coupe' : '🔊 Son actif'
       )
     ),
     React.createElement(
@@ -74,44 +30,27 @@ export default function HomePage({ nickname, hasNickname, onSubmitNickname, onCo
       React.createElement(
         'p',
         { className: 'home-subtitle' },
-        'Defends ta capitale avant l arrivee du boss. Choisis ton pseudo d escouade.'
+        'Defends ta capitale avant l arrivee du boss. Le pseudo se configure directement sur la carte.'
       ),
-      hasNickname
-        ? React.createElement(
-            'div',
-            { className: 'home-returning-block' },
-            React.createElement('div', { className: 'home-preview' }, `Indicatif actuel: ${previewName}`),
-            React.createElement(
-              'button',
-              { className: 'home-submit-btn', type: 'button', onClick: onContinue },
-              'Retourner a la carte'
-            )
-          )
-        : React.createElement(
-            'form',
-            { className: 'home-form', onSubmit: handleSubmit },
-            React.createElement('label', { htmlFor: 'nickname', className: 'home-label' }, 'Pseudo'),
-            React.createElement('input', {
-              id: 'nickname',
-              className: 'home-input',
-              value,
-              maxLength: 24,
-              placeholder: 'Ex: Capitaine_Nova',
-              onChange: (e) => setValue(e.target.value)
-            }),
-            error && React.createElement('div', { className: 'home-error' }, error),
-            React.createElement(
-              'button',
-              { type: 'submit', className: 'home-submit-btn' },
-              'Valider et rejoindre la carte'
-            )
-          ),
+      React.createElement(
+        'div',
+        { className: 'home-returning-block' },
+        hasNickname && previewName && React.createElement('div', { className: 'home-preview' }, `Indicatif actuel: ${previewName}`),
+        React.createElement(
+          'button',
+          { className: 'home-submit-btn', type: 'button', onClick: onContinue },
+          hasNickname ? 'Retourner a la carte' : 'Ouvrir la carte'
+        )
+      ),
+      React.createElement(
+        'div',
+        { className: 'audio-status-note' },
+        !audioMuted
+          ? 'Le son reste actif entre la carte, l arene et l ecran de fin.'
+          : 'Tu peux activer le son maintenant ou plus tard depuis la carte.'
+      ),
       previewName && React.createElement('div', { className: 'home-preview' }, `Indicatif actuel: ${previewName}`),
-      hasNickname && React.createElement(
-        'button',
-        { className: 'home-ghost-btn', type: 'button', onClick: onContinue },
-        'Continuer sans changer le pseudo'
-      )
+      !hasNickname && React.createElement('div', { className: 'instructions-sub' }, 'Une modal pseudo apparaitra automatiquement si aucun nom n est stocke.')
     )
   )
 }

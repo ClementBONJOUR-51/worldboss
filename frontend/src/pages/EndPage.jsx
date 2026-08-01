@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import audioManager from '../services/audioManager'
 
 function formatDuration(ms) {
   const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000))
@@ -7,7 +8,7 @@ function formatDuration(ms) {
   return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
 
-export default function EndPage({ playerId, playerNickname, matchEndData, onBackHome, onBackMap }) {
+export default function EndPage({ playerId, playerNickname, matchEndData, onBackHome, onBackMap, audioMuted, onToggleAudioMute }) {
   const [countdown, setCountdown] = useState(120)
 
   useEffect(() => {
@@ -24,6 +25,12 @@ export default function EndPage({ playerId, playerNickname, matchEndData, onBack
       clearTimeout(redirect)
     }
   }, [matchEndData?.endedAt, onBackHome])
+
+  useEffect(() => {
+    if (countdown > 0 && countdown <= 5) {
+      audioManager.play('endCountdown')
+    }
+  }, [countdown])
 
   const outcome = matchEndData?.outcome || 'victory'
   const isDefeat = outcome === 'defeat'
@@ -124,6 +131,15 @@ export default function EndPage({ playerId, playerNickname, matchEndData, onBack
       React.createElement(
         'div',
         { className: 'end-actions' },
+        React.createElement(
+          'button',
+          {
+            className: `audio-toggle-btn ${audioMuted ? '' : 'audio-toggle-enabled'}`.trim(),
+            type: 'button',
+            onClick: onToggleAudioMute
+          },
+          audioMuted ? '🔇 Son coupe' : '🔊 Son actif'
+        ),
         React.createElement('button', { className: 'end-btn-primary', onClick: onBackHome }, 'Retour accueil'),
         React.createElement('button', { className: 'end-btn-secondary', onClick: onBackMap }, 'Retour carte'),
         React.createElement('div', { className: 'end-countdown' }, `Retour auto dans ${countdown}s`)

@@ -1,94 +1,50 @@
 const EventEmitter = require('events');
+const backendConfig = require('./backendConfig');
+const bossAttackConfig = require('./bossAttackConfig');
 
 class BossManager extends EventEmitter {
   constructor() {
     super();
-    this.bossPresets = [
-      {
-        id: 'boss-1',
-        name: 'Leviathan',
-        maxHp: 10000,
-        spawn: { city: 'Atlantique Nord', lat: 60.0, lng: -30.0 },
-        target: { city: 'Paris', lat: 48.8566, lng: 2.3522 },
-        spawnOffsetMinutes: -3,
-        travelMinutes: 20
-      },
-      {
-        id: 'boss-2',
-        name: 'Rift Serpent',
-        maxHp: 16000,
-        spawn: { city: 'Ocean Indien', lat: -18.0, lng: 64.0 },
-        target: { city: 'Tokyo', lat: 35.6762, lng: 139.6503 },
-        spawnOffsetMinutes: -1,
-        travelMinutes: 24
-      },
-      {
-        id: 'boss-3',
-        name: 'Abyss Colossus',
-        maxHp: 14000,
-        spawn: { city: 'Atlantique Ouest', lat: 33.0, lng: -65.0 },
-        target: { city: 'New York', lat: 40.7128, lng: -74.0060 },
-        spawnOffsetMinutes: -2,
-        travelMinutes: 18
-      },
-      {
-        id: 'boss-4',
-        name: 'Sable Maw',
-        maxHp: 13000,
-        spawn: { city: 'Mer Rouge', lat: 20.0, lng: 38.0 },
-        target: { city: 'Cairo', lat: 30.0444, lng: 31.2357 },
-        spawnOffsetMinutes: -2,
-        travelMinutes: 16
-      },
-      {
-        id: 'boss-5',
-        name: 'Storm Kraken',
-        maxHp: 17000,
-        spawn: { city: 'Pacifique Sud', lat: -33.0, lng: 156.0 },
-        target: { city: 'Sydney', lat: -33.8688, lng: 151.2093 },
-        spawnOffsetMinutes: -1,
-        travelMinutes: 22
-      },
-      {
-        id: 'boss-6',
-        name: 'Obsidian Eel',
-        maxHp: 15000,
-        spawn: { city: 'Atlantique Sud', lat: -20.0, lng: -15.0 },
-        target: { city: 'Rio de Janeiro', lat: -22.9068, lng: -43.1729 },
-        spawnOffsetMinutes: -1,
-        travelMinutes: 21
-      }
-    ];
+    this.bossPresets = backendConfig.bosses;
+    this.bossEncounterConfig = backendConfig.bossEncounter || {};
     this.bossPresetIndex = 0;
-    this.structureDifficulty = {
-      ammoFactory: { base: 14, growth: 1.24 },
-      frontlineCamp: { base: 18, growth: 1.28 },
-      trainingCenter: { base: 22, growth: 1.3 },
-      artilleryBattery: { base: 24, growth: 1.32 },
-      headquarters: { base: 30, growth: 1.35 }
-    };
+    this.structureDifficulty = backendConfig.structures.difficulty;
     this.structures = this._createStructuresState();
     this.playerAmmo = new Map();
     this.playerEmotes = new Map();
     this.playerNicknames = new Map();
+    this.playerStates = new Map();
     this.playerEmoteTimers = new Map();
-    this.allowedEmotes = new Set(['🤩', '🫡', '😁', '😎', '😰']);
+    this.allowedEmotes = new Set(backendConfig.players.allowedEmotes);
+    this.bosses = [];
+    this.primaryBossId = null;
+    this.boss = null;
     this.resetBoss();
-    this.pendingClicks = new Map(); // playerId -> clicks
-    this.connectedPlayers = new Set(); // active players in arena
+    this.pendingClicks = new Map();
+    this.connectedPlayers = new Set();
     this.chatHistory = [];
     this.chatMessageCounter = 0;
     this.damageTotals = { click: 0, passive: 0, qte: 0 };
     this.matchEnded = false;
-    this.tickIntervalMs = 2000;
+    this.currentBossAttack = null;
+    this.nextBossAttackAt = 0;
+    this.tickIntervalMs = backendConfig.combat.tickIntervalMs;
     this._tickHandle = null;
   }
 
   _createBossFromPreset(preset) {
+    const criticalLevel = Math.max(1, Math.min(3, Number(preset.criticalLevel) || 1));
+    const difficultyLevel = Math.max(1, Number(preset.difficultyLevel || criticalLevel) || criticalLevel);
+
     return {
       id: preset.id,
       name: preset.name,
+      emoji: preset.emoji || this.bossEncounterConfig.defaultEmoji || '👾',
       maxHp: preset.maxHp,
+      difficultyLevel,
+      difficultyLabel: preset.difficultyLabel || `Niveau ${difficultyLevel}`,
+      criticalLevel,
+      criticalLabel: bossAttackConfig.bossCriticalLabels[criticalLevel] || bossAttackConfig.bossCriticalLabels[1],
       hp: preset.maxHp,
       alive: true,
       spawn: { ...preset.spawn },
@@ -97,6 +53,8 @@ class BossManager extends EventEmitter {
       spawnAt: preset.spawnAt,
       arrivalAt: preset.arrivalAt,
       progressPercent: 0,
+      structures: this._createStructuresState(),
+      nextBossAttackAt: this._rollNextBossAttackAt(Date.now()),
       currentPosition: {
         lat: preset.spawn.lat,
         lng: preset.spawn.lng
@@ -114,9 +72,17 @@ class BossManager extends EventEmitter {
     };
   }
 
+  _getConfiguredActiveBossCount() {
+    const rosterSize = Math.max(1, this.bossPresets.length || 1);
+    const minCount = Math.max(1, Number(this.bossEncounterConfig.minActiveCount) || 1);
+    const maxCount = Math.max(minCount, Number(this.bossEncounterConfig.maxActiveCount) || minCount);
+    const desiredCount = Math.max(minCount, Number(this.bossEncounterConfig.activeCount) || minCount);
+    return Math.min(rosterSize, Math.max(minCount, Math.min(maxCount, desiredCount)));
+  }
+
   _buildTimedPreset(template, now = Date.now()) {
     const spawnOffsetMinutes = Number(template.spawnOffsetMinutes || 0);
-    const travelMinutes = Math.max(8, Number(template.travelMinutes || 20));
+    const travelMinutes = Math.max(Number(backendConfig.combat.minTravelMinutes) || 8, Number(template.travelMinutes || 20));
     const spawnAt = now + spawnOffsetMinutes * 60 * 1000;
     const arrivalAt = spawnAt + travelMinutes * 60 * 1000;
 
@@ -127,16 +93,29 @@ class BossManager extends EventEmitter {
     };
   }
 
-  _computeTimeline(now = Date.now()) {
-    const spawnAt = Number(this.boss.spawnAt) || now;
-    const arrivalAt = Number(this.boss.arrivalAt) || now;
+  _buildEncounterPresets(now = Date.now()) {
+    const encounterCount = this._getConfiguredActiveBossCount();
+    const presets = [];
+
+    for (let index = 0; index < encounterCount; index += 1) {
+      const presetTemplate = this.bossPresets[(this.bossPresetIndex + index) % this.bossPresets.length];
+      presets.push(this._buildTimedPreset(presetTemplate, now));
+    }
+
+    this.bossPresetIndex = (this.bossPresetIndex + encounterCount) % this.bossPresets.length;
+    return presets;
+  }
+
+  _computeTimeline(boss, now = Date.now()) {
+    const spawnAt = Number(boss?.spawnAt) || now;
+    const arrivalAt = Number(boss?.arrivalAt) || now;
     const duration = Math.max(1, arrivalAt - spawnAt);
     const ratio = Math.max(0, Math.min(1, (now - spawnAt) / duration));
 
-    const startLat = Number(this.boss.spawn?.lat) || 0;
-    const startLng = Number(this.boss.spawn?.lng) || 0;
-    const targetLat = Number(this.boss.target?.lat) || startLat;
-    const targetLng = Number(this.boss.target?.lng) || startLng;
+    const startLat = Number(boss?.spawn?.lat) || 0;
+    const startLng = Number(boss?.spawn?.lng) || 0;
+    const targetLat = Number(boss?.target?.lat) || startLat;
+    const targetLng = Number(boss?.target?.lng) || startLng;
 
     const lat = startLat + (targetLat - startLat) * ratio;
     const lng = startLng + (targetLng - startLng) * ratio;
@@ -150,15 +129,15 @@ class BossManager extends EventEmitter {
     };
   }
 
-  _syncBossTimeline(now = Date.now()) {
-    if (!this.boss) return false;
-    const timeline = this._computeTimeline(now);
-    const prevProgress = Number(this.boss.progressPercent) || 0;
-    const prevLat = Number(this.boss.currentPosition?.lat || 0);
-    const prevLng = Number(this.boss.currentPosition?.lng || 0);
+  _syncBossTimeline(boss, now = Date.now()) {
+    if (!boss) return false;
+    const timeline = this._computeTimeline(boss, now);
+    const prevProgress = Number(boss.progressPercent) || 0;
+    const prevLat = Number(boss.currentPosition?.lat || 0);
+    const prevLng = Number(boss.currentPosition?.lng || 0);
 
-    this.boss.progressPercent = timeline.progressPercent;
-    this.boss.currentPosition = timeline.currentPosition;
+    boss.progressPercent = timeline.progressPercent;
+    boss.currentPosition = timeline.currentPosition;
 
     return (
       Math.abs(prevProgress - timeline.progressPercent) > 0.01 ||
@@ -167,26 +146,296 @@ class BossManager extends EventEmitter {
     );
   }
 
+  _syncBossesTimeline(now = Date.now()) {
+    let changed = false;
+    this.bosses.forEach((boss) => {
+      changed = this._syncBossTimeline(boss, now) || changed;
+    });
+    this._refreshPrimaryBossReference();
+    return changed;
+  }
+
+  _getBossById(bossId) {
+    return this.bosses.find((boss) => boss.id === bossId) || null;
+  }
+
+  _getAliveBosses() {
+    return this.bosses.filter((boss) => boss.alive);
+  }
+
+  _getPrimaryBoss() {
+    const preferredBoss = this.primaryBossId ? this._getBossById(this.primaryBossId) : null;
+    if (preferredBoss?.alive) {
+      return preferredBoss;
+    }
+
+    const firstAliveBoss = this.bosses.find((boss) => boss.alive) || null;
+    if (firstAliveBoss) {
+      this.primaryBossId = firstAliveBoss.id;
+      return firstAliveBoss;
+    }
+
+    return preferredBoss || this.bosses[0] || null;
+  }
+
+  _refreshPrimaryBossReference() {
+    this.boss = this._getPrimaryBoss();
+    this.primaryBossId = this.boss?.id || this.primaryBossId || null;
+    this.structures = this.boss?.structures || this._createStructuresState();
+    return this.boss;
+  }
+
+  selectPrimaryBoss(bossId) {
+    const requestedBoss = this._getBossById(bossId);
+    if (!requestedBoss) {
+      return { ok: false, reason: 'invalid_boss' };
+    }
+
+    if (!requestedBoss.alive) {
+      return { ok: false, reason: 'boss_dead' };
+    }
+
+    this.primaryBossId = requestedBoss.id;
+    this.currentBossAttack = null;
+    requestedBoss.nextBossAttackAt = this._rollNextBossAttackAt(Date.now());
+    this._refreshPrimaryBossReference();
+    this.emit('update', this.getState());
+    return { ok: true, bossId: requestedBoss.id };
+  }
+
+  _getBossStructures(boss = this._getPrimaryBoss()) {
+    if (!boss) {
+      return this._createStructuresState();
+    }
+
+    if (!boss.structures) {
+      boss.structures = this._createStructuresState();
+    }
+
+    return boss.structures;
+  }
+
+  _createPlayerState() {
+    return {
+      status: 'healthy',
+      injuredUntil: 0,
+      lastHitAt: 0,
+      lastAttackType: null
+    };
+  }
+
+  _ensurePlayerState(playerId) {
+    if (!this.playerStates.has(playerId)) {
+      this.playerStates.set(playerId, this._createPlayerState());
+    }
+    return this.playerStates.get(playerId);
+  }
+
+  _rollNextBossAttackAt(now = Date.now()) {
+    const minInterval = Math.max(2000, Number(bossAttackConfig.schedule.minIntervalMs) || 12000);
+    const maxInterval = Math.max(minInterval, Number(bossAttackConfig.schedule.maxIntervalMs) || minInterval);
+    const variance = maxInterval - minInterval;
+    return now + minInterval + Math.floor(Math.random() * (variance + 1));
+  }
+
+  _getBossCriticalLevel(boss = this._getPrimaryBoss()) {
+    return Math.max(1, Math.min(3, Number(boss?.criticalLevel) || 1));
+  }
+
+  _getBossAttackType(progressRatio = 0, boss = this._getPrimaryBoss()) {
+    const criticalLevel = this._getBossCriticalLevel(boss);
+    const ultimateChanceConfig = bossAttackConfig.ultimateChance;
+    const chance = Math.max(
+      0,
+      Math.min(
+        Number(ultimateChanceConfig.max) || 1,
+        Number(ultimateChanceConfig.base || 0) + progressRatio * Number(ultimateChanceConfig.progressScale || 0) + (criticalLevel - 1) * Number(ultimateChanceConfig.criticalLevelBonus || 0)
+      )
+    );
+
+    return {
+      type: Math.random() < chance ? 'ultimate' : 'light',
+      ultimateChance: Number(chance.toFixed(3))
+    };
+  }
+
+  _createBossAttack(now = Date.now()) {
+    const activeBoss = this._getPrimaryBoss();
+    if (!activeBoss?.alive) return null;
+
+    const progressRatio = Math.max(0, Math.min(1, Number(activeBoss.progressPercent || 0) / 100));
+    const criticalLevel = this._getBossCriticalLevel(activeBoss);
+    const attackTypeData = this._getBossAttackType(progressRatio, activeBoss);
+    const attackConfig = bossAttackConfig.attacks[attackTypeData.type] || bossAttackConfig.attacks.light;
+    const hitChance = Math.max(
+      0,
+      Math.min(
+        1,
+        Number(attackConfig.hitChanceBase || 0) + (criticalLevel - 1) * Number(attackConfig.hitChancePerCriticalLevel || 0) + progressRatio * Number(attackConfig.hitChanceProgressScale || 0)
+      )
+    );
+    const warningDurationMs = Math.max(800, Number(attackConfig.warningDurationMs) || 2600);
+
+    return {
+      attackId: `atk-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      bossId: activeBoss.id,
+      bossName: activeBoss.name,
+      bossEmoji: activeBoss.emoji,
+      attackType: attackTypeData.type,
+      attackLabel: attackConfig.label,
+      animation: attackConfig.animation || attackTypeData.type,
+      criticalLevel,
+      criticalLabel: activeBoss.criticalLabel || bossAttackConfig.bossCriticalLabels[criticalLevel],
+      progressPercent: Number(activeBoss.progressPercent || 0),
+      warningAt: now,
+      resolveAt: now + warningDurationMs,
+      warningDurationMs,
+      injuryDurationMs: Math.max(1000, Number(attackConfig.injuryDurationMs) || 4500),
+      hitChance: Number(hitChance.toFixed(3)),
+      ultimateChance: attackTypeData.ultimateChance,
+      lane: 'all',
+      status: 'warning'
+    };
+  }
+
+  _scheduleBossAttack(now = Date.now()) {
+    const activeBoss = this._getPrimaryBoss();
+    if (!activeBoss?.alive || this.matchEnded) return false;
+    if (this.currentBossAttack || this.connectedPlayers.size === 0) return false;
+    const nextBossAttackAt = Number(activeBoss.nextBossAttackAt || 0);
+    if (now < nextBossAttackAt) return false;
+
+    this.currentBossAttack = this._createBossAttack(now);
+    if (!this.currentBossAttack) return false;
+
+    activeBoss.nextBossAttackAt = this._rollNextBossAttackAt(this.currentBossAttack.resolveAt);
+    this.emit('boss_attack_warning', this.currentBossAttack);
+    return true;
+  }
+
+  _resolveBossAttack(now = Date.now()) {
+    if (!this.currentBossAttack || now < Number(this.currentBossAttack.resolveAt || 0)) return null;
+
+    const resolvedAttack = this.currentBossAttack;
+    const hitPlayers = [];
+    const injuredUntilByPlayer = {};
+    const connectedPlayers = Array.from(this.connectedPlayers);
+
+    connectedPlayers.forEach((playerId) => {
+      const state = this._ensurePlayerState(playerId);
+      const wasAlreadyInjured = Number(state.injuredUntil || 0) > now;
+      const wasHit = Math.random() < Number(resolvedAttack.hitChance || 0);
+      if (!wasHit) return;
+
+      const nextInjuredUntil = now + Number(resolvedAttack.injuryDurationMs || 0);
+      state.status = 'injured';
+      state.injuredUntil = Math.max(nextInjuredUntil, Number(state.injuredUntil || 0));
+      state.lastHitAt = now;
+      state.lastAttackType = resolvedAttack.attackType;
+
+      hitPlayers.push(playerId);
+      injuredUntilByPlayer[playerId] = state.injuredUntil;
+
+      this.emit('player_injured', {
+        attackId: resolvedAttack.attackId,
+        bossId: resolvedAttack.bossId,
+        playerId,
+        attackType: resolvedAttack.attackType,
+        criticalLevel: resolvedAttack.criticalLevel,
+        injuredUntil: state.injuredUntil,
+        injuryDurationMs: Number(resolvedAttack.injuryDurationMs || 0),
+        wasAlreadyInjured
+      });
+    });
+
+    this.currentBossAttack = null;
+    const payload = {
+      ...resolvedAttack,
+      status: 'resolved',
+      resolvedAt: now,
+      hitPlayerIds: hitPlayers,
+      injuredUntilByPlayer
+    };
+    this.emit('boss_attack_resolved', payload);
+    return payload;
+  }
+
+  _refreshPlayerStates(now = Date.now()) {
+    let changed = false;
+    this.playerStates.forEach((state) => {
+      if (state.status === 'injured' && Number(state.injuredUntil || 0) <= now) {
+        state.status = 'healthy';
+        state.injuredUntil = 0;
+        state.lastAttackType = null;
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  getPlayerState(playerId, now = Date.now()) {
+    const state = this._ensurePlayerState(playerId);
+    const injuredUntil = Number(state.injuredUntil || 0);
+    if (injuredUntil > now) {
+      return {
+        status: 'injured',
+        injuredUntil,
+        remainingMs: injuredUntil - now,
+        lastHitAt: Number(state.lastHitAt || 0),
+        lastAttackType: state.lastAttackType || null
+      };
+    }
+
+    return {
+      status: 'healthy',
+      injuredUntil: 0,
+      remainingMs: 0,
+      lastHitAt: Number(state.lastHitAt || 0),
+      lastAttackType: state.lastAttackType || null
+    };
+  }
+
+  getActionBlockStatus(playerId, now = Date.now()) {
+    const playerState = this.getPlayerState(playerId, now);
+    if (playerState.status === 'injured') {
+      return {
+        blocked: true,
+        reason: 'injured',
+        injuredUntil: playerState.injuredUntil,
+        remainingMs: playerState.remainingMs,
+        lastAttackType: playerState.lastAttackType
+      };
+    }
+
+    return { blocked: false, reason: null, injuredUntil: 0, remainingMs: 0, lastAttackType: null };
+  }
+
   resetBoss() {
-    const template = this.bossPresets[this.bossPresetIndex % this.bossPresets.length];
-    const preset = this._buildTimedPreset(template, Date.now());
-    this.bossPresetIndex += 1;
-    this.boss = this._createBossFromPreset(preset);
-    this.structures = this._createStructuresState();
-    this._syncBossTimeline();
-    this.contributions = {}; // playerId -> totalDamage
+    const presets = this._buildEncounterPresets(Date.now());
+    this.bosses = presets.map((preset) => this._createBossFromPreset(preset));
+    this.primaryBossId = this.bosses[0]?.id || null;
+    this.boss = this._getPrimaryBoss();
+    this._syncBossesTimeline();
+    this.contributions = {};
     if (this.pendingClicks && typeof this.pendingClicks.clear === 'function') {
       this.pendingClicks.clear();
     }
     this.damageTotals = { click: 0, passive: 0, qte: 0 };
     this.matchEnded = false;
     this.chatHistory = [];
+    this.currentBossAttack = null;
+    this.playerStates.forEach((state) => {
+      state.status = 'healthy';
+      state.injuredUntil = 0;
+      state.lastHitAt = 0;
+      state.lastAttackType = null;
+    });
   }
 
   registerPlayer(playerId) {
     this.connectedPlayers.add(playerId);
     if (!this.playerAmmo.has(playerId)) {
-      this.playerAmmo.set(playerId, 10);
+      this.playerAmmo.set(playerId, backendConfig.players.initialAmmo);
     }
     if (!this.playerEmotes.has(playerId)) {
       this.playerEmotes.set(playerId, null);
@@ -194,6 +443,7 @@ class BossManager extends EventEmitter {
     if (!this.playerNicknames.has(playerId)) {
       this.playerNicknames.set(playerId, null);
     }
+    this._ensurePlayerState(playerId);
   }
 
   unregisterPlayer(playerId) {
@@ -201,6 +451,7 @@ class BossManager extends EventEmitter {
     this.playerAmmo.delete(playerId);
     this.playerEmotes.delete(playerId);
     this.playerNicknames.delete(playerId);
+    this.playerStates.delete(playerId);
     const timer = this.playerEmoteTimers.get(playerId);
     if (timer) {
       clearTimeout(timer);
@@ -210,7 +461,7 @@ class BossManager extends EventEmitter {
 
   setPlayerNickname(playerId, nickname) {
     this.registerPlayer(playerId);
-    const clean = String(nickname || '').trim().slice(0, 24);
+    const clean = String(nickname || '').trim().slice(0, backendConfig.players.nicknameMaxLength);
     if (!clean) {
       return { ok: false, reason: 'invalid_nickname' };
     }
@@ -223,11 +474,11 @@ class BossManager extends EventEmitter {
   getPlayerNickname(playerId) {
     const nickname = this.playerNicknames.get(playerId);
     if (nickname && nickname.trim()) return nickname;
-    return `Joueur-${String(playerId || '').slice(0, 6)}`;
+    return `${backendConfig.players.defaultNicknamePrefix}-${String(playerId || '').slice(0, 6)}`;
   }
 
   addChatMessage(playerId, text) {
-    const content = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const content = String(text || '').replace(/\s+/g, ' ').trim().slice(0, backendConfig.text.chatMessageMaxLength);
     if (!content) {
       return { ok: false, reason: 'empty_message' };
     }
@@ -241,7 +492,7 @@ class BossManager extends EventEmitter {
     };
 
     this.chatHistory.push(msg);
-    if (this.chatHistory.length > 60) {
+    if (this.chatHistory.length > backendConfig.text.chatHistoryMaxEntries) {
       this.chatHistory.shift();
     }
 
@@ -249,7 +500,7 @@ class BossManager extends EventEmitter {
   }
 
   addSystemMessage(playerId, text, kind = 'system') {
-    const content = String(text || '').trim().slice(0, 140);
+    const content = String(text || '').trim().slice(0, backendConfig.text.systemMessageMaxLength);
     if (!content) {
       return { ok: false, reason: 'empty_message' };
     }
@@ -264,7 +515,7 @@ class BossManager extends EventEmitter {
     };
 
     this.chatHistory.push(msg);
-    if (this.chatHistory.length > 60) {
+    if (this.chatHistory.length > backendConfig.text.chatHistoryMaxEntries) {
       this.chatHistory.shift();
     }
 
@@ -289,7 +540,7 @@ class BossManager extends EventEmitter {
         this.playerEmoteTimers.delete(playerId);
         this.emit('update', this.getState());
       }
-    }, 3000);
+    }, backendConfig.players.emoteDurationMs);
 
     this.playerEmoteTimers.set(playerId, timer);
     this.emit('update', this.getState());
@@ -303,7 +554,8 @@ class BossManager extends EventEmitter {
   }
 
   getStructureProgress(structureKey) {
-    const structure = this.structures[structureKey];
+    const structures = this._getBossStructures();
+    const structure = structures[structureKey];
     if (!structure) {
       return {
         level: 0,
@@ -326,7 +578,8 @@ class BossManager extends EventEmitter {
   }
 
   registerStructureBuild(structureKey, amount = 1) {
-    const structure = this.structures[structureKey];
+    const structures = this._getBossStructures();
+    const structure = structures[structureKey];
     if (!structure) {
       return { ok: false, reason: 'invalid_structure' };
     }
@@ -370,30 +623,41 @@ class BossManager extends EventEmitter {
   }
 
   isFrontlineCampActive() {
-    return (this.structures.frontlineCamp?.level || 0) > 0;
+    const structures = this._getBossStructures();
+    return (structures.frontlineCamp?.level || 0) > 0;
   }
 
   getQteModifiers() {
-    const campLevel = this.structures.frontlineCamp?.level || 0;
-    const hqLevel = this.structures.headquarters?.level || 0;
-    const chanceMultiplier = Math.max(0, 1 + Math.max(0, campLevel - 1) * 0.15 + hqLevel * 0.1);
-    const tierBoost = Math.min(3, Math.floor(Math.max(0, campLevel - 1) / 2) + Math.min(1, hqLevel));
+    const structures = this._getBossStructures();
+    const campLevel = structures.frontlineCamp?.level || 0;
+    const hqLevel = structures.headquarters?.level || 0;
+    const chanceMultiplier = Math.max(
+      0,
+      1 + Math.max(0, campLevel - 1) * backendConfig.structures.qteChanceBonusPerCampLevelAfterOne + hqLevel * backendConfig.structures.qteHeadquartersChanceBonusPerLevel
+    );
+    const tierBoost = Math.min(
+      backendConfig.structures.qteTierBoostMax,
+      Math.floor(Math.max(0, campLevel - 1) / backendConfig.structures.qteTierBoostEveryCampLevels) + Math.min(backendConfig.structures.qteHeadquartersTierBoostMax, hqLevel)
+    );
     return { chanceMultiplier, tierBoost };
   }
 
   _getAmmoProductionPerSec() {
-    const level = this.structures.ammoFactory?.level || 0;
-    return level * 8;
+    const structures = this._getBossStructures();
+    const level = structures.ammoFactory?.level || 0;
+    return level * backendConfig.structures.ammoFactoryProductionPerLevel;
   }
 
   _getPassiveDpsPerSec() {
-    const level = this.structures.artilleryBattery?.level || 0;
+    const structures = this._getBossStructures();
+    const level = structures.artilleryBattery?.level || 0;
     const players = Math.max(0, this.connectedPlayers.size);
-    return level * players * 0.6;
+    return level * players * backendConfig.structures.artilleryBatteryDamagePerPlayerPerLevel;
   }
 
   getClickDamagePerClick() {
-    const level = this.structures.trainingCenter?.level || 1;
+    const structures = this._getBossStructures();
+    const level = structures.trainingCenter?.level || 1;
     return Math.max(1, Math.floor(level));
   }
 
@@ -426,7 +690,7 @@ class BossManager extends EventEmitter {
     if (players.length === 0) return 0;
 
     const baseShare = Math.floor(damage / players.length);
-    let remainder = damage % players.length;
+    const remainder = damage % players.length;
     players.forEach((pid, idx) => {
       const extra = idx < remainder ? 1 : 0;
       const playerDamage = baseShare + extra;
@@ -439,14 +703,48 @@ class BossManager extends EventEmitter {
   }
 
   registerClick(playerId, power = 1) {
-    if (!this.boss.alive) return;
-    this.registerPlayer(playerId); // ensure player is registered
+    const activeBoss = this._getPrimaryBoss();
+    if (!activeBoss?.alive) return;
+    this.registerPlayer(playerId);
+    if (this.getActionBlockStatus(playerId).blocked) return;
     const prev = this.pendingClicks.get(playerId) || 0;
     this.pendingClicks.set(playerId, prev + power);
   }
 
+  _applyDamageToBosses(totalDamage) {
+    let remainingDamage = Math.max(0, Math.floor(Number(totalDamage) || 0));
+    const killedBossIds = [];
+
+    while (remainingDamage > 0) {
+      const activeBoss = this._getPrimaryBoss();
+      if (!activeBoss?.alive) break;
+
+      const appliedDamage = Math.min(remainingDamage, Math.max(0, Math.floor(Number(activeBoss.hp) || 0)));
+      activeBoss.hp = Math.max(0, activeBoss.hp - appliedDamage);
+      remainingDamage -= appliedDamage;
+
+      if (activeBoss.hp === 0) {
+        activeBoss.alive = false;
+        killedBossIds.push(activeBoss.id);
+        this.primaryBossId = activeBoss.id;
+        if (this.currentBossAttack?.bossId === activeBoss.id) {
+          this.currentBossAttack = null;
+        }
+        this._refreshPrimaryBossReference();
+      }
+    }
+
+    this._refreshPrimaryBossReference();
+    return {
+      appliedDamage: Math.max(0, Math.floor(Number(totalDamage) || 0)) - remainingDamage,
+      killedBossIds,
+      allBossesDefeated: this._getAliveBosses().length === 0
+    };
+  }
+
   applyInstantDamage(playerId, damage) {
-    if (!this.boss.alive) {
+    const activeBoss = this._getPrimaryBoss();
+    if (!activeBoss?.alive) {
       return { applied: false, reason: 'boss_dead' };
     }
 
@@ -456,16 +754,20 @@ class BossManager extends EventEmitter {
     }
 
     this.registerPlayer(playerId);
+    if (this.getActionBlockStatus(playerId).blocked) {
+      return { applied: false, reason: 'injured' };
+    }
+
     this.contributions[playerId] = (this.contributions[playerId] || 0) + safeDamage;
     this.damageTotals.qte += safeDamage;
-    this.boss.hp = Math.max(0, this.boss.hp - safeDamage);
+    const damageResult = this._applyDamageToBosses(safeDamage);
 
-    if (this.boss.hp === 0) {
+    if (damageResult.allBossesDefeated) {
       this._finalizeMatch('victory');
     }
 
     this.emit('update', this.getState());
-    return { applied: true, damage: safeDamage };
+    return { applied: true, damage: safeDamage, killedBossIds: damageResult.killedBossIds };
   }
 
   start() {
@@ -479,14 +781,23 @@ class BossManager extends EventEmitter {
   }
 
   _tick() {
-    if (!this.boss.alive || this.matchEnded) return;
-    const timelineChanged = this._syncBossTimeline();
-    const now = Date.now();
+    const activeBoss = this._getPrimaryBoss();
+    if (!activeBoss?.alive || this.matchEnded) return;
 
-    if (now >= Number(this.boss.arrivalAt || 0)) {
+    const now = Date.now();
+    const timelineChanged = this._syncBossesTimeline(now);
+    const recoveredPlayers = this._refreshPlayerStates(now);
+
+    const arrivedBoss = this._getAliveBosses().find((boss) => now >= Number(boss.arrivalAt || 0));
+    if (arrivedBoss && this.bossEncounterConfig.defeatOnAnyArrival !== false) {
+      this.primaryBossId = arrivedBoss.id;
+      this._refreshPrimaryBossReference();
       this._finalizeMatch('defeat');
       return;
     }
+
+    const resolvedBossAttack = this._resolveBossAttack(now);
+    const warnedBossAttack = this._scheduleBossAttack(now);
 
     this._distributeAmmoForTick();
 
@@ -506,27 +817,30 @@ class BossManager extends EventEmitter {
     this.pendingClicks.clear();
 
     if (totalDamage > 0) {
-      this.boss.hp = Math.max(0, this.boss.hp - totalDamage);
-      if (this.boss.hp === 0) {
+      const damageResult = this._applyDamageToBosses(totalDamage);
+      if (damageResult.allBossesDefeated) {
         this._finalizeMatch('victory');
       }
       this.emit('combat_tick', {
         clickDamageTotal,
         passiveDamageTotal,
-        totalDamage
+        totalDamage,
+        killedBossIds: damageResult.killedBossIds,
+        bossAttackResolved: resolvedBossAttack
       });
       this.emit('update', this.getState());
       return;
     }
 
-    if (timelineChanged) {
+    if (timelineChanged || recoveredPlayers || resolvedBossAttack || warnedBossAttack) {
       this.emit('update', this.getState());
     }
   }
 
   _getTimeStats(now = Date.now()) {
-    const spawnAt = Number(this.boss.spawnAt) || now;
-    const arrivalAt = Number(this.boss.arrivalAt) || now;
+    const referenceBoss = this._getPrimaryBoss();
+    const spawnAt = Number(referenceBoss?.spawnAt) || now;
+    const arrivalAt = Number(referenceBoss?.arrivalAt) || now;
     const totalDurationMs = Math.max(0, arrivalAt - spawnAt);
     const elapsedMs = Math.max(0, Math.min(totalDurationMs, now - spawnAt));
     const remainingMs = Math.max(0, arrivalAt - now);
@@ -553,22 +867,29 @@ class BossManager extends EventEmitter {
   _finalizeMatch(outcome) {
     if (this.matchEnded) return;
     this.matchEnded = true;
-    this.boss.alive = false;
+    if (outcome === 'defeat') {
+      const primaryBoss = this._getPrimaryBoss();
+      if (primaryBoss) {
+        primaryBoss.alive = false;
+      }
+    }
     const payload = this._buildMatchEndPayload(outcome, Date.now());
     this.emit('match_end', payload);
-    this.emit('dead', { boss: this.boss, contributions: this.contributions, outcome });
+    this.emit('dead', { boss: this._getPrimaryBoss(), bosses: this.bosses, contributions: this.contributions, outcome });
   }
 
   getState() {
-    this._syncBossTimeline();
+    this._syncBossesTimeline();
     const connectedPlayers = Array.from(this.connectedPlayers);
     const ammoByPlayer = {};
     const playerEmotes = {};
     const playerNicknames = {};
+    const playerStates = {};
     connectedPlayers.forEach((pid) => {
       ammoByPlayer[pid] = Number(this.getAmmo(pid).toFixed(2));
       playerEmotes[pid] = this.playerEmotes.get(pid) || null;
       playerNicknames[pid] = this.playerNicknames.get(pid) || null;
+      playerStates[pid] = this.getPlayerState(pid);
     });
 
     const passiveDpsPerSec = Number(this._getPassiveDpsPerSec().toFixed(2));
@@ -580,14 +901,24 @@ class BossManager extends EventEmitter {
       contributions[pid] = Math.max(0, Math.floor(Number(value) || 0));
     });
 
+    const primaryBoss = this._getPrimaryBoss();
+
     return {
-      boss: this.boss,
+      boss: primaryBoss,
+      bosses: this.bosses,
+      bossEncounter: {
+        activeCount: this._getConfiguredActiveBossCount(),
+        aliveCount: this._getAliveBosses().length,
+        primaryBossId: primaryBoss?.id || null
+      },
       contributions,
       connectedPlayers,
       ammoByPlayer,
       playerEmotes,
       playerNicknames,
+      playerStates,
       chatHistory: this.chatHistory,
+      bossAttack: this.currentBossAttack,
       structures: {
         ammoFactory: {
           ...this.getStructureProgress('ammoFactory'),

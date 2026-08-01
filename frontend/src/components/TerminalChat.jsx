@@ -20,7 +20,7 @@ function TypewriterLine({ text }) {
   return React.createElement('div', { className: 'terminal-line' }, text.slice(0, visibleChars))
 }
 
-export default function TerminalChat({ messages, playerId, onSend }) {
+export default function TerminalChat({ messages, playerId, onSend, disabled = false, disabledMessage = '' }) {
   const [draft, setDraft] = useState('')
   const [showRecentOnly, setShowRecentOnly] = useState(true)
   const scrollRef = useRef(null)
@@ -38,6 +38,7 @@ export default function TerminalChat({ messages, playerId, onSend }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
+    if (disabled) return
     const text = String(draft || '').trim()
     if (!text) return
     onSend(text)
@@ -86,11 +87,13 @@ export default function TerminalChat({ messages, playerId, onSend }) {
         className: 'terminal-input',
         value: draft,
         maxLength: 140,
-        onChange: (e) => setDraft(e.target.value)
+        onChange: (e) => setDraft(e.target.value),
+        disabled,
+        placeholder: disabled ? (disabledMessage || 'Action indisponible') : ''
       }),
       React.createElement(
         'button',
-        { className: 'terminal-send-btn', type: 'submit', title: 'Envoyer', 'aria-label': 'Envoyer' },
+        { className: 'terminal-send-btn', type: 'submit', title: 'Envoyer', 'aria-label': 'Envoyer', disabled },
         React.createElement('i', { className: 'bi bi-caret-right-fill', 'aria-hidden': 'true' })
       )
     )

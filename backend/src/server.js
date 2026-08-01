@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const WebSocket = require('ws');
+const backendConfig = require('./backendConfig');
 const bossManager = require('./bossManager');
 const qteService = require('./qteService');
 const { v4: uuidv4 } = require('uuid');
@@ -20,6 +21,19 @@ app.get('/boss', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const lastChatByPlayer = new Map();
+
+function sendActionBlocked(ws, channel, blockStatus, extra = {}) {
+  ws.send(JSON.stringify({
+    type: channel,
+    data: {
+      ok: false,
+      reason: blockStatus.reason || 'blocked',
+      injuredUntil: blockStatus.injuredUntil || 0,
+      remainingMs: blockStatus.remainingMs || 0,
+      ...extra
+    }
+  }));
+}
 
 wss.on('connection', (ws) => {
   const clientId = uuidv4();
@@ -49,6 +63,21 @@ wss.on('connection', (ws) => {
       if (msg.type === 'click') {
         const pid = msg.playerId || ws._clientId;
         const now = Date.now();
+        const blockStatus = bossManager.getActionBlockStatus(pid, now);
+
+        if (blockStatus.blocked) {
+          sendActionBlocked(ws, 'click_result', blockStatus, {
+            damage: 0,
+            clickId: msg.clickId || null,
+            x: msg.x ?? null,
+            y: msg.y ?? null
+          });
+          sendActionBlocked(ws, 'qte_result', blockStatus, {
+            damage: 0,
+            cooldownRemainingMs: qteService.getCooldownRemainingMs(pid, now)
+          });
+          return;
+        }
 
         if (!bossManager.consumeAmmo(pid, 1)) {
           console.log('[QTE] click denied no_ammo for player', pid);
@@ -128,6 +157,14 @@ wss.on('connection', (ws) => {
         const pid = msg.playerId || ws._clientId;
         const now = Date.now();
         const qteId = msg.qteId;
+        const blockStatus = bossManager.getActionBlockStatus(pid, now);
+        if (blockStatus.blocked) {
+          sendActionBlocked(ws, 'qte_result', blockStatus, {
+            damage: 0,
+            cooldownRemainingMs: qteService.getCooldownRemainingMs(pid, now)
+          });
+          return;
+        }
         const result = qteService.validateHit(pid, qteId, now);
 
         if (result.ok) {
@@ -158,6 +195,11 @@ wss.on('connection', (ws) => {
 
       if (msg.type === 'structure_build') {
         const pid = msg.playerId || ws._clientId;
+        const blockStatus = bossManager.getActionBlockStatus(pid, Date.now());
+        if (blockStatus.blocked) {
+          sendActionBlocked(ws, 'structure_build_result', blockStatus, {});
+          return;
+        }
         const structureKey = msg.structureKey;
         bossManager.registerPlayer(pid);
         const result = bossManager.registerStructureBuild(structureKey, 1);
@@ -169,6 +211,11 @@ wss.on('connection', (ws) => {
 
       if (msg.type === 'set_emote') {
         const pid = msg.playerId || ws._clientId;
+        const blockStatus = bossManager.getActionBlockStatus(pid, Date.now());
+        if (blockStatus.blocked) {
+          sendActionBlocked(ws, 'set_emote_result', blockStatus, {});
+          return;
+        }
         const emote = msg.emote;
         const result = bossManager.setPlayerEmote(pid, emote);
         ws.send(JSON.stringify({
@@ -190,11 +237,21 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'set_nickname_result', data: result }));
       }
 
+      if (msg.type === 'select_boss') {
+        const result = bossManager.selectPrimaryBoss(msg.bossId)
+        ws.send(JSON.stringify({ type: 'select_boss_result', data: result }))
+      }
+
       if (msg.type === 'chat_message') {
         const pid = msg.playerId || ws._clientId;
         const nowForChat = Date.now();
+        const blockStatus = bossManager.getActionBlockStatus(pid, nowForChat);
+        if (blockStatus.blocked) {
+          sendActionBlocked(ws, 'chat_message_result', blockStatus, {});
+          return;
+        }
         const lastAt = lastChatByPlayer.get(pid) || 0;
-        if (nowForChat - lastAt < 600) {
+        if (nowForChat - lastAt < backendConfig.server.chatCooldownMs) {
           ws.send(JSON.stringify({
             type: 'chat_message_result',
             data: { ok: false, reason: 'cooldown' }
@@ -247,6 +304,18 @@ bossManager.on('combat_tick', (data) => {
   broadcast({ type: 'combat_tick', data });
 });
 
+bossManager.on('boss_attack_warning', (data) => {
+  broadcast({ type: 'boss_attack_warning', data });
+});
+
+bossManager.on('boss_attack_resolved', (data) => {
+  broadcast({ type: 'boss_attack_resolved', data });
+});
+
+bossManager.on('player_injured', (data) => {
+  broadcast({ type: 'player_injured', data });
+});
+
 bossManager.on('dead', ({ boss, contributions }) => {
   const fullState = bossManager.getState();
   broadcast({ type: 'dead', data: fullState });
@@ -258,13 +327,13 @@ bossManager.on('match_end', (payload) => {
   setTimeout(() => {
     bossManager.resetBoss();
     broadcast({ type: 'state', data: bossManager.getState() });
-  }, 120000);
+  }, backendConfig.server.matchResetDelayMs);
 });
 
 bossManager.start();
 
-const PORT = process.env.PORT || process.env.BACKEND_PORT || 3001;
-const HOST = process.env.HOST || process.env.BACKEND_HOST || '0.0.0.0';
+const PORT = process.env.PORT || process.env.BACKEND_PORT || backendConfig.server.defaultPort;
+const HOST = process.env.HOST || process.env.BACKEND_HOST || backendConfig.server.defaultHost;
 server.listen(PORT, HOST, () => {
   console.log(`🎮 Backend Server running at http://${HOST}:${PORT}`);
   console.log(`📡 WebSocket endpoint: ws://${HOST}:${PORT}`);

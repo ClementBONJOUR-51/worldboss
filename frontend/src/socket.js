@@ -56,6 +56,11 @@ export default function createSocket(onMessage) {
     ws.send(JSON.stringify(payload))
   }
 
+  function sendSelectBoss(bossId) {
+    const payload = { type: 'select_boss', bossId }
+    ws.send(JSON.stringify(payload))
+  }
+
   function sendChatMessage(text, playerId) {
     const payload = { type: 'chat_message', text, playerId }
     ws.send(JSON.stringify(payload))
@@ -65,5 +70,5 @@ export default function createSocket(onMessage) {
     try { ws.close() } catch (e) { /* ignore */ }
   }
 
-  return { sendClick, sendQteHit, sendStructureBuild, sendEmote, sendNickname, sendChatMessage, close }
+  return { sendClick, sendQteHit, sendStructureBuild, sendEmote, sendNickname, sendSelectBoss, sendChatMessage, close }
 }

@@ -5,6 +5,7 @@ export default function SoldierPanel({
   playerIds,
   contributions,
   playerEmotes,
+  playerStates,
   currentPlayerId,
   className = '',
   center = false,
@@ -12,7 +13,11 @@ export default function SoldierPanel({
   emoteMenuOpen = false,
   emoteChoices = [],
   currentPlayerEmote = '🪖',
-  onSelectEmote
+  onSelectEmote,
+  warningActive = false,
+  ghostBurstsByPlayer = {},
+  injuredEmoji = '😵',
+  ghostEmoji = '👻'
 }) {
   const renderSoldiers = () => {
     if (!playerIds || playerIds.length === 0) {
@@ -21,16 +26,19 @@ export default function SoldierPanel({
 
     return playerIds.map((pid) => {
       const dmg = contributions?.[pid] || 0
-      const emote = playerEmotes?.[pid] || '🪖'
+      const playerState = playerStates?.[pid] || null
+      const isInjured = playerState?.status === 'injured'
+      const emote = isInjured ? injuredEmoji : (playerEmotes?.[pid] || '🪖')
       const isCurrent = currentPlayerId && pid === currentPlayerId
-      const clickHandler = isCurrent && typeof onSelfClick === 'function' ? () => onSelfClick(pid) : undefined
+      const hasGhostBurst = Boolean(ghostBurstsByPlayer?.[pid])
+      const clickHandler = isCurrent && !isInjured && typeof onSelfClick === 'function' ? () => onSelfClick(pid) : undefined
       return React.createElement(
         'div',
         {
           key: pid,
-          className: `soldier ${isCurrent ? 'soldier-current soldier-clickable' : ''}`.trim(),
+          className: `soldier ${isCurrent ? 'soldier-current soldier-clickable' : ''} ${isInjured ? 'soldier-injured' : ''} ${hasGhostBurst ? 'soldier-ghost-active' : ''}`.trim(),
           onClick: clickHandler,
-          title: `${pid.slice(0, 8)}...: ${dmg} dmg`
+          title: `${pid.slice(0, 8)}...: ${dmg} dmg${isInjured ? ' // Blesse' : ''}`
         },
         isCurrent && emoteMenuOpen && React.createElement(
           'div',
@@ -58,6 +66,7 @@ export default function SoldierPanel({
           )
         ),
         React.createElement('span', { className: 'soldier-emote soldier-emote-walk' }, emote),
+        hasGhostBurst && React.createElement('span', { className: 'soldier-ghost-burst', 'aria-hidden': 'true' }, ghostEmoji),
         isCurrent && React.createElement('span', { className: 'soldier-self-tag' }, 'MOI')
       )
     })
@@ -65,7 +74,7 @@ export default function SoldierPanel({
 
   return React.createElement(
     'div',
-    { className: `soldier-side ${className}`.trim() },
+    { className: `soldier-side ${className} ${warningActive ? 'soldier-side-warning' : ''}`.trim() },
     React.createElement('div', { className: 'soldier-side-title' }, title),
     React.createElement(
       'div',
