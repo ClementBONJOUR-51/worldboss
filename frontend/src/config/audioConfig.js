@@ -31,7 +31,7 @@ export const audioConfig = {
   masterVolume: 0.8,
   categories: {
     ui: 0.6,
-    combat: 0.8,
+    combat: 0.6,
     social: 0.5,
     ambient: 0.4,
     music: 0.5
@@ -57,7 +57,7 @@ export const audioConfig = {
     qteFail: { url: null, category: 'combat', volume: 0.72, maxConcurrent: 2, cooldownMs: 90 },
     artilleryIncoming: { url: null, category: 'combat', volume: 0.72, maxConcurrent: 8, cooldownMs: 0 },
     artilleryImpact: { url: availableAudio.artilleryImpact, category: 'combat', volume: 0.02, maxConcurrent: 10, cooldownMs: 100 },
-    structureBuild: { url: null, category: 'combat', volume: 0.66, maxConcurrent: 3, cooldownMs: 70 },
+    structureBuild: { url: availableAudio.structureBuild, category: 'combat', volume: 0.05, maxConcurrent: 3, cooldownMs: 70 },
     bossWarningLight: { url: availableAudio.bossWarningLight, category: 'combat', volume: 0.4, maxConcurrent: 1, cooldownMs: 120 },
     bossWarningUltimate: { url: availableAudio.bossWarningUltimate, category: 'combat', volume: 0.3, maxConcurrent: 1, cooldownMs: 120 },
     bossImpactLight: { url: availableAudio.bossImpactLight, category: 'combat', volume: 0.4, maxConcurrent: 2, cooldownMs: 80 },

@@ -5,7 +5,7 @@ import SoldierPanel from '../components/SoldierPanel'
 import TerminalChat from '../components/TerminalChat'
 import audioManager from '../services/audioManager'
 
-export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMute, onExit, socket, qteGrantEvent, qteResultEvent, clickResultEvent, combatTickEvent, bossAttackWarningEvent, bossAttackResolvedEvent, chatMessages }) {
+export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMute, onExit, socket, qteGrantEvent, qteResultEvent, clickResultEvent, structureBuildResultEvent, combatTickEvent, bossAttackWarningEvent, bossAttackResolvedEvent, chatMessages }) {
   const [isFlashing, setIsFlashing] = useState(false)
   const [isShaking, setIsShaking] = useState(false)
   const [isLightShaking, setIsLightShaking] = useState(false)
@@ -34,6 +34,7 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
   const playedBossWarningRef = useRef(null)
   const playedBossResolvedRef = useRef(null)
   const previousLocalInjuredRef = useRef(false)
+  const activeQteRef = useRef(null)
   const currentBoss = state?.boss || null
 
   function getDamageFontSize(damage) {
@@ -45,6 +46,18 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
         Math.round(arenaConfig.floatingDamage.baseFontSizePx + Math.log2(value + 1) * arenaConfig.floatingDamage.logScaleFactor)
       )
     )
+  }
+
+  function getStructureLabel(structureKey) {
+    const labels = {
+      ammoFactory: 'Usine a munitions',
+      frontlineCamp: 'Camp de front',
+      trainingCenter: 'Centre d entrainement',
+      artilleryBattery: 'Batterie de siege',
+      headquarters: 'Quartier general'
+    }
+
+    return labels[structureKey] || 'Structure'
   }
 
   function addFloatingDamage({ x, y, damage, source = 'click' }) {
@@ -233,6 +246,10 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
   }, [state?.boss?.hp, state?.boss?.maxHp, bossHpRedPercent, bossHpWhitePercent])
 
   useEffect(() => {
+    activeQteRef.current = activeQte
+  }, [activeQte])
+
+  useEffect(() => {
     if (!qteGrantEvent?.qteId) return
     if (qteGrantEvent.playerId && qteGrantEvent.playerId !== playerId) return
 
@@ -244,8 +261,9 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
       audioManager.play('qteReady')
     }
 
-    const currentPos = activeQte && activeQte.qteId === qteGrantEvent.qteId
-      ? { x: activeQte.x, y: activeQte.y }
+    const currentQte = activeQteRef.current
+    const currentPos = currentQte && currentQte.qteId === qteGrantEvent.qteId
+      ? { x: currentQte.x, y: currentQte.y }
       : getBossQtePosition()
     clearQteTimeout()
     setQteFeedback(null)
@@ -266,7 +284,7 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
         return current
       })
     }, msLeft)
-  }, [qteGrantEvent, activeQte, playerId])
+  }, [qteGrantEvent, playerId])
 
   useEffect(() => {
     if (!qteResultEvent) return
@@ -312,6 +330,35 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
       })
     }, arenaConfig.floatingDamage.qteFeedbackDurationMs)
   }, [qteResultEvent])
+
+  useEffect(() => {
+    if (!structureBuildResultEvent?.receivedAt) return
+
+    const feedbackId = Date.now() + Math.random()
+    if (structureBuildResultEvent.ok) {
+      audioManager.play('structureBuild')
+      const leveledUp = Math.max(0, Number(structureBuildResultEvent.leveledUp || 0))
+      const structureLabel = getStructureLabel(structureBuildResultEvent.structureKey)
+      setQteFeedback({
+        kind: 'success',
+        text: leveledUp > 0 ? `${structureLabel} niveau +${leveledUp}` : `${structureLabel} construit`,
+        id: feedbackId
+      })
+    } else {
+      setQteFeedback({
+        kind: 'error',
+        text: 'Construction refusee',
+        id: feedbackId
+      })
+    }
+
+    setTimeout(() => {
+      setQteFeedback((current) => {
+        if (!current) return null
+        return current.id === feedbackId ? null : current
+      })
+    }, arenaConfig.floatingDamage.qteFeedbackDurationMs)
+  }, [structureBuildResultEvent])
 
   useEffect(() => {
     return () => clearQteTimeout()
@@ -517,7 +564,6 @@ export default function ArenaPage({ state, playerId, audioMuted, onToggleAudioMu
   const handleStructureBuild = (structureKey) => {
     if (localPlayerInjured) return
     if (!socket || !state?.boss?.alive) return
-    audioManager.play('structureBuild')
     socket.sendStructureBuild(structureKey)
   }
 

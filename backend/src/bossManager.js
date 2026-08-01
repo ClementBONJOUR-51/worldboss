@@ -763,7 +763,7 @@ class BossManager extends EventEmitter {
     const damageResult = this._applyDamageToBosses(safeDamage);
 
     if (damageResult.allBossesDefeated) {
-      this._finalizeMatch('victory');
+      this._finalizeMatch('victory', damageResult.killedBossIds[damageResult.killedBossIds.length - 1] || this.primaryBossId);
     }
 
     this.emit('update', this.getState());
@@ -792,7 +792,7 @@ class BossManager extends EventEmitter {
     if (arrivedBoss && this.bossEncounterConfig.defeatOnAnyArrival !== false) {
       this.primaryBossId = arrivedBoss.id;
       this._refreshPrimaryBossReference();
-      this._finalizeMatch('defeat');
+      this._finalizeMatch('defeat', arrivedBoss.id);
       return;
     }
 
@@ -819,7 +819,7 @@ class BossManager extends EventEmitter {
     if (totalDamage > 0) {
       const damageResult = this._applyDamageToBosses(totalDamage);
       if (damageResult.allBossesDefeated) {
-        this._finalizeMatch('victory');
+        this._finalizeMatch('victory', damageResult.killedBossIds[damageResult.killedBossIds.length - 1] || this.primaryBossId);
       }
       this.emit('combat_tick', {
         clickDamageTotal,
@@ -847,11 +847,13 @@ class BossManager extends EventEmitter {
     return { totalDurationMs, elapsedMs, remainingMs };
   }
 
-  _buildMatchEndPayload(outcome, now = Date.now()) {
+  _buildMatchEndPayload(outcome, now = Date.now(), endingBossId = null) {
     const fullState = this.getState();
+    const endingBoss = endingBossId ? this._getBossById(endingBossId) : this._getPrimaryBoss();
     return {
       outcome,
       endedAt: now,
+      endingBoss,
       time: this._getTimeStats(now),
       damageTotals: {
         click: this.damageTotals.click,
@@ -864,16 +866,16 @@ class BossManager extends EventEmitter {
     };
   }
 
-  _finalizeMatch(outcome) {
+  _finalizeMatch(outcome, endingBossId = null) {
     if (this.matchEnded) return;
     this.matchEnded = true;
     if (outcome === 'defeat') {
-      const primaryBoss = this._getPrimaryBoss();
+      const primaryBoss = endingBossId ? this._getBossById(endingBossId) : this._getPrimaryBoss();
       if (primaryBoss) {
         primaryBoss.alive = false;
       }
     }
-    const payload = this._buildMatchEndPayload(outcome, Date.now());
+    const payload = this._buildMatchEndPayload(outcome, Date.now(), endingBossId);
     this.emit('match_end', payload);
     this.emit('dead', { boss: this._getPrimaryBoss(), bosses: this.bosses, contributions: this.contributions, outcome });
   }

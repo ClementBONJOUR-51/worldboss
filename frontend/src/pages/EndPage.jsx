@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import audioManager from '../services/audioManager'
+import { getArenaBackgroundForBoss } from '../arenaBackgrounds'
 
 function formatDuration(ms) {
   const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000))
@@ -42,6 +43,14 @@ export default function EndPage({ playerId, playerNickname, matchEndData, onBack
   const structures = state?.structures || {}
   const time = matchEndData?.time || {}
   const damageTotals = matchEndData?.damageTotals || {}
+  const endingBoss = matchEndData?.endingBoss || state?.boss || null
+  const endingBossName = endingBoss?.name || 'Boss'
+  const endingBossEmoji = endingBoss?.emoji || (isDefeat ? '💀' : '👾')
+  const endingBossTarget = endingBoss?.targetCity || endingBoss?.target?.city || 'Ville cible'
+  const endingBossBackground = getArenaBackgroundForBoss(endingBoss)
+  const endingBossHeroStyle = endingBossBackground
+    ? { backgroundImage: `linear-gradient(rgba(13, 16, 20, 0.42), rgba(13, 16, 20, 0.78)), url(${endingBossBackground})` }
+    : undefined
 
   const allPlayers = useMemo(() => {
     const ids = new Set([...connectedPlayers, ...Object.keys(contributions)])
@@ -64,8 +73,8 @@ export default function EndPage({ playerId, playerNickname, matchEndData, onBack
 
   const title = isDefeat ? 'Capitale perdue' : 'Boss neutralise'
   const subtitle = isDefeat
-    ? 'Le boss est arrive a destination avant elimination.'
-    : 'L escouade a elimine le boss avant son arrivee.'
+    ? `${endingBossName} a atteint ${endingBossTarget} avant son elimination.`
+    : `${endingBossName} a ete neutralise lors de l assaut final.`
 
   return React.createElement(
     'div',
@@ -76,6 +85,17 @@ export default function EndPage({ playerId, playerNickname, matchEndData, onBack
       React.createElement('div', { className: 'end-kicker' }, isDefeat ? 'Defeat' : 'Victory'),
       React.createElement('h1', { className: 'end-title' }, title),
       React.createElement('p', { className: 'end-subtitle' }, subtitle),
+      React.createElement(
+        'div',
+        { className: 'end-boss-hero', style: endingBossHeroStyle },
+        React.createElement('div', { className: 'end-boss-emoji' }, endingBossEmoji),
+        React.createElement(
+          'div',
+          { className: 'end-boss-meta' },
+          React.createElement('div', { className: 'end-boss-name' }, endingBossName),
+          React.createElement('div', { className: 'end-boss-target' }, `${isDefeat ? 'Cible atteinte' : 'Dernier boss vaincu'}: ${endingBossTarget}`)
+        )
+      ),
 
       React.createElement(
         'div',

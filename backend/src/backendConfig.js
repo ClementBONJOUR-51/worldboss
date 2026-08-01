@@ -123,7 +123,7 @@ const backendConfig = {
       artilleryBattery: { base: 24, growth: 1.32 },
       headquarters: { base: 30, growth: 1.35 }
     },
-    ammoFactoryProductionPerLevel: 8,
+    ammoFactoryProductionPerLevel: 2,
     artilleryBatteryDamagePerPlayerPerLevel: 0.6,
     qteChanceBonusPerCampLevelAfterOne: 0.15,
     qteTierBoostEveryCampLevels: 2,

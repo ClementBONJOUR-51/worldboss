@@ -83,6 +83,7 @@ export default function App() {
   const [qteGrantEvent, setQteGrantEvent] = useState(null)
   const [qteResultEvent, setQteResultEvent] = useState(null)
   const [clickResultEvent, setClickResultEvent] = useState(null)
+  const [structureBuildResultEvent, setStructureBuildResultEvent] = useState(null)
   const [combatTickEvent, setCombatTickEvent] = useState(null)
   const [bossAttackWarningEvent, setBossAttackWarningEvent] = useState(null)
   const [bossAttackResolvedEvent, setBossAttackResolvedEvent] = useState(null)
@@ -182,6 +183,12 @@ export default function App() {
       }
       if (msg.type === 'click_result') {
         setClickResultEvent({
+          ...msg.data,
+          receivedAt: Date.now()
+        })
+      }
+      if (msg.type === 'structure_build_result') {
+        setStructureBuildResultEvent({
           ...msg.data,
           receivedAt: Date.now()
         })
@@ -320,6 +327,7 @@ export default function App() {
       qteGrantEvent,
       qteResultEvent,
       clickResultEvent,
+      structureBuildResultEvent,
       combatTickEvent,
       bossAttackWarningEvent,
       bossAttackResolvedEvent,
