@@ -21,7 +21,9 @@ const availableAudio = {
   noAmmo: withBaseUrl('audio/combat/no-ammo.mp3'),
   playerInjured: withBaseUrl('audio/combat/player-injured.mp3'),
   chatReceive: withBaseUrl('audio/social/chat-receive.mp3'),
-  chatSend: withBaseUrl('audio/social/chat-send.mp3')
+  chatSend: withBaseUrl('audio/social/chat-send.mp3'),
+  structureBuild: withBaseUrl('audio/combat/structure-build.mp3')
+
 }
 
 export const audioConfig = {
